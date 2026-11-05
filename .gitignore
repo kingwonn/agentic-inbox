@@ -17,3 +17,12 @@ opencode.jsonc
 skills-lock.json
 .DS_Store
 worker-configuration.d.ts
+
+# Task Center runtime data
+taskcenter/data/*
+!taskcenter/data/.gitkeep
+taskcenter/.env
+taskcenter/node_modules/
+taskcenter/dist/
+taskcenter/web/node_modules/
+taskcenter/web/dist/
