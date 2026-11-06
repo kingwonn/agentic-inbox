@@ -211,8 +211,17 @@ describe("sensors/imap", () => {
     store.uidValidity = 1800000000n;
     const r4 = await s.poll();
     expect(s.client().calls.some((c) => c.startsWith('search:{"since"'))).toBe(true);
-    expect(r4.signals.every((x) => x.external_id.startsWith("1800000000:"))).toBe(true);
-    expect(r4.warnings?.some((w) => w.includes("pending"))).toBe(true); // 3 recent messages, max 2
+    expect(r4.signals.map((x) => x.external_id)).toEqual(["1800000000:7", "1800000000:9"]); // seed keeps the newest max_messages (2 of 3)
+    expect(s.h.repo.cursors.get("imap", "uidvalidity")).toBe("1800000000");
+    // incremental mode reports overflow as pending
+    store.messages.push(msg(10, d("2026-11-05T09:00:00Z"), rfc822({ from: "c@x", subject: "c", date: "Thu, 05 Nov 2026 09:00:00 +0000", messageId: "<c@x>", text: "c" })));
+    store.messages.push(msg(11, d("2026-11-05T09:30:00Z"), rfc822({ from: "d@x", subject: "d", date: "Thu, 05 Nov 2026 09:30:00 +0000", messageId: "<d@x>", text: "d" })));
+    store.messages.push(msg(12, d("2026-11-05T09:45:00Z"), rfc822({ from: "e@x", subject: "e", date: "Thu, 05 Nov 2026 09:45:00 +0000", messageId: "<e@x>", text: "e" })));
+    const r5 = await s.poll();
+    expect(r5.signals.map((x) => x.external_id)).toEqual(["1800000000:10", "1800000000:11"]);
+    expect(r5.warnings?.some((w) => w.includes("1 more message(s) pending"))).toBe(true);
+    expect(s.h.repo.cursors.get("imap", "last_uid")).toBe("11");
+    store.messages.splice(store.messages.length - 3, 3);
     store.messages.pop();
     store.uidValidity = 1700000000n;
   });

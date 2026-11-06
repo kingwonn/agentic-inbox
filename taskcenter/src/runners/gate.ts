@@ -101,7 +101,8 @@ export function createToolGate(opts: ToolGateOpts): ToolGateWithState {
       expires_at: isoPlus(expiresHours * 3_600_000),
     });
     gate.approvalIds.push(approval.id);
-    bus.record({ type: "approval_requested", task_id: task.id, run_id: run.id, message: `approval requested: ${truncateChars(what, 120)}`, payload: { approval_id: approval.id, tool, risk: decision.risk, reason: decision.reason } });
+    // The approval service records the user-facing approval_requested event; this one is the gate's audit trail.
+    bus.record({ type: "approval_requested", level: "debug", task_id: task.id, run_id: run.id, message: `gate: waiting for approval ${approval.id} (${tool})`, payload: { approval_id: approval.id, tool, risk: decision.risk, reason: decision.reason, source: "gate" } });
     logger.info(`gate approval ${approval.id} requested for ${tool}`, { task_id: task.id, run_id: run.id });
     let decided: Approval;
     try {
@@ -112,7 +113,7 @@ export function createToolGate(opts: ToolGateOpts): ToolGateWithState {
     }
     const result = decideFromApproval(decided, tool, input);
     if (result.action === "deny" && result.pendingApprovalId) gate.pendingApprovalId = result.pendingApprovalId;
-    else bus.record({ type: "approval_decided", task_id: task.id, run_id: run.id, level: "debug", message: `gate: ${tool} ${result.action} (${decided.status})`, payload: { approval_id: approval.id, status: decided.status, decision: decided.decision } });
+    logger.info(`gate ${tool}: ${result.action} (approval ${approval.id} ${decided.status})`, { task_id: task.id, run_id: run.id });
     return result;
   };
 

@@ -283,7 +283,10 @@ class CallBudget {
       return { ok: false, status: 0, data: undefined, error: "budget exhausted" };
     }
     this.calls++;
-    return this.api.request<T>(path);
+    const r = await this.api.request<T>(path);
+    // 401 = the configured token/gh login is invalid: misconfiguration, not a transient problem
+    if (r.status === 401) throw new SensorConfigError(`github: bad credentials (${this.api.mode}): ${r.error ?? "HTTP 401"}`);
+    return r;
   }
   /** Paginated GET (per_page must already be in the path). */
   async list<T>(path: string, maxPages: number): Promise<{ items: T[]; ok: boolean; error?: string; status: number }> {
@@ -635,7 +638,6 @@ export function createGithubSensor(opts: GithubSensorOptions = {}): Sensor {
               repo: repo.full,
               branch: defaultBranch,
               count: list.length,
-              since: commitsSince,
               commits: list.slice(0, 50).map((c) => ({
                 sha: c.sha,
                 message: truncate(c.commit.message.split("\n")[0] ?? "", 200),

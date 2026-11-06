@@ -300,6 +300,9 @@ describe("sensors/github poll (mocked api)", () => {
     const h = harness();
     const entry: SensorEntry = { sensor, config: { enabled: true, repos: [REPO], token: "", use_gh_cli: true }, enabled: true };
     await expect(sensor.poll(makeSensorContext(entry, { repo: h.repo, logger: silentLogger, loaded: h.loaded }))).rejects.toBeInstanceOf(SensorConfigError);
+    // a 401 from the API (bad token) is misconfiguration too
+    const bad = setup(new FakeApi(routes({ [BASE]: () => ({ ok: false, status: 401, data: undefined, error: "HTTP 401: Bad credentials" }) })), { include_searches: false });
+    await expect(bad.poll()).rejects.toThrow(/bad credentials/);
     expect(sensor.configured({ repos: [], use_gh_cli: true })).toBe(false);
     expect(sensor.configured({ repos: [REPO], use_gh_cli: false, token: "" })).toBe(false);
     expect(sensor.configured({ repos: [REPO], use_gh_cli: false, token: "ghp_x" })).toBe(true);
