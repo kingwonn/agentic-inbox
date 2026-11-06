@@ -47,3 +47,21 @@ engine/daemon.ts:     export async function startDaemon(ctx: AppContext, opts?: 
 ```
 
 Rules for every agent: only edit your own directories; core files (`src/core/*`, `src/config/*`, the `types.ts` interface files) may receive **small additive** changes only (report them). Do not run `git commit`/`git checkout`. Before finishing: `npx vitest run tests/<yours>*.test.ts` passes and `npx tsc -p tsconfig.json --noEmit` reports no errors in your files. Write `docs/modules/<module>.md`. User-facing text honors `config.locale` (`zh-CN` default; also provide `en`). Keep live `claude -p` calls few and on haiku.
+
+## Change log (additive changes made during the parallel build and integration)
+
+| Where | Change | By |
+|---|---|---|
+| `src/core/types.ts` | `TriageResult.level_proposed?: Level` (LLM proposal before policy clamp) | brain |
+| `src/core/budget.ts` | `Budget.addCost(usd, now?)` for non-run costs (triage, planning) | engine |
+| `src/core/logger.ts` | `redact()` fix: single-group secret patterns were appended with `***` instead of replaced | engine |
+| `src/core/repo.ts` | `EventRepo.list` orders by `ts DESC, rowid DESC` (stable within a millisecond) | orchestrator |
+| `src/hitl/types.ts` | `InboundDecision.decision: Decision \| (string & {})` (custom option values); `Channel.onDecided?(approval)` | hitl |
+| `src/sensors/registry.ts` | `makeSensorContext(..., { now? })`; `SensorEntry.config` adds `locale`, `timezone`, `capture_dir`, `repo_root` | sensors |
+| `src/runners/gate.ts` | returns `ToolGateWithState` (`pendingApprovalId?`, `approvalIds[]`) | runners |
+| `src/runners/taskcenter-tools.ts` | returns `{ name, server, state, tools }` | runners |
+| `src/runners/workspace.ts` | result adds `branch?` | runners |
+| `src/brain/providers/claude-cli.ts` | structured calls use text JSON + zod by default (`TC_CLI_JSON_SCHEMA=1` opts into `--json-schema`); nested-session env vars stripped (`STRIPPED_ENV`) | integration |
+| `src/runners/claude-sdk.ts`, `claude-cli.ts` | explicit per-run session id (`sessionId` / `--session-id`) so nested runs never inherit the outer Claude Code session id | integration |
+| `src/server/app.ts` | `createServer(ctx, { heartbeatMs?, distDir? })`; extra routes `POST /api/tasks/:id/events`, `GET /api/context`, `GET /api/executor` | server |
+| `src/engine/app.ts`, `daemon.ts` | optional fields (`dry`, `isolated`, `dbPath`, `sensors`, `logLevel`, `logToStderr`, `handleSignals`, `initialPatrolDelayMs`) | engine |
