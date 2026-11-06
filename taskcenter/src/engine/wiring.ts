@@ -164,7 +164,7 @@ export async function wireServices(ctx: AppContext, deps: WireDeps = {}): Promis
   if (overrides.notifier) notifier = overrides.notifier;
   else if (notifierMod) notifier = notifierMod.createNotifier({ config, repo, bus, logger: baseLogger, rootDir: loaded.rootDir, dataDir: ctx.dataDir, publicUrl });
   else {
-    notifier = createConsoleNotifier(baseLogger, repo, { print: true });
+    notifier = createConsoleNotifier(baseLogger, repo, { print: !isolated });
     notifierIsFallback = true;
     mark("hitl/notifier");
   }

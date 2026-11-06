@@ -92,7 +92,7 @@ export function runFollowUps(ctx: AppContext, deps: SchedulerDeps): { followUps:
     const others = repo.approvals.list({ task_id: task.id, status: "pending", limit: 20 });
     if (others.length) continue;
     try {
-      transitionTask(repo, bus, task.id, "blocked", { reason: `approval ${a.id} expired`, patch: { last_error: `approval expired: ${a.title}` } });
+      transitionTask(repo, bus, task.id, "blocked", { reason: `approval ${a.id} expired`, patch: { last_error: `approval expired: ${a.title}` }, force: true });
       out.blocked++;
     } catch (e) {
       ctx.logger.warn(`blocking ${task.id} after expiry failed: ${errMsg(e)}`);

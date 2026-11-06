@@ -9,8 +9,10 @@
  * task.context.pending_resume = { resume: {approvalId, kind, decision, note, editedPayload, decidedAt} };
  * the executor consumes that marker at checkout and resumes the parked agent session.
  */
+import { execFile } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, join } from "node:path";
+import { promisify } from "node:util";
 import type { AppContext, ExecutorStatus, NotifierLike } from "../core/app.js";
 import type { BudgetStatus } from "../core/budget.js";
 import { TERMINAL_TASK_STATUSES, canTransitionTask, transitionRun, transitionTask } from "../core/state.js";
@@ -48,6 +50,8 @@ interface Running {
   promise: Promise<void>;
   cancelled?: boolean;
   resume?: ResumeInfo;
+  workspace?: { path: string; kind: string; branch?: string; startCommit?: string };
+  delta?: { commits: string[]; dirty: number; stat: string };
 }
 
 /** Read the resume marker written by the approval service (nested) or an older flat form. */
@@ -68,7 +72,29 @@ export function readPendingResume(task: Task): PendingResume | undefined {
   };
 }
 
+const execFileP = promisify(execFile);
 const RESULT_TEXT_MAX = 64 * 1024;
+
+async function git(cwd: string, args: string[]): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileP("git", args, { cwd, timeout: 10_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    return stdout.trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Summary of what changed in a worktree since `startCommit` (commits + uncommitted files). */
+async function workspaceDelta(ws: string, startCommit: string | undefined): Promise<{ commits: string[]; dirty: number; stat: string } | undefined> {
+  const status = await git(ws, ["status", "--porcelain"]);
+  if (status === undefined) return undefined;
+  const dirty = status ? status.split("\n").filter(Boolean).length : 0;
+  const log = startCommit ? await git(ws, ["log", "--oneline", `${startCommit}..HEAD`]) : "";
+  const commits = log ? log.split("\n").filter(Boolean) : [];
+  if (!dirty && !commits.length) return { commits, dirty, stat: "" };
+  const stat = (startCommit ? await git(ws, ["diff", "--stat", startCommit]) : await git(ws, ["diff", "--stat"])) ?? "";
+  return { commits, dirty, stat };
+}
 const TEXT_EXT = new Set([".md", ".txt", ".json", ".yaml", ".yml", ".ts", ".js", ".py", ".html", ".css", ".csv", ".diff", ".patch", ".log"]);
 
 export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTaskEvents?: boolean }): ExecutorService {
@@ -257,7 +283,13 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
         payload: { attempt: run.attempt, reason: run.reason, runner: runner.name, model: run.model, level: task.level, resume_of: run.resume_of },
       });
       const ws = await deps.prepareWorkspace(task);
-      if (task.workspace !== ws.path) repo.tasks.update(task.id, { workspace: ws.path });
+      const branch = (ws as { branch?: string }).branch;
+      const startCommit = ws.kind === "worktree" ? await git(ws.path, ["rev-parse", "HEAD"]) : undefined;
+      entry.workspace = { path: ws.path, kind: ws.kind, branch, startCommit };
+      const wsPatch: Partial<Task> = {};
+      if (task.workspace !== ws.path) wsPatch.workspace = ws.path;
+      if (branch && task.context?.branch !== branch) wsPatch.context = { ...(task.context ?? {}), branch, workspace_kind: ws.kind };
+      if (Object.keys(wsPatch).length) repo.tasks.update(task.id, wsPatch);
       const context = deps.loadContext();
       const resume = entry.resume;
       const promptTask = promptTaskFor({ ...task, workspace: ws.path });
@@ -311,6 +343,11 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
         }
       }
       if (result?.sessionId) sessionId = result.sessionId;
+      const gatePending = (gate as { pendingApprovalId?: string }).pendingApprovalId;
+      if (gatePending && !entry.cancelled && (!result || result.status !== "waiting_human")) {
+        // The gate parked an approval; the agent stopped (or failed) around it → wait for the human.
+        result = { ...(result ?? { text: "", costUsd: 0, inputTokens: 0, outputTokens: 0, numTurns: 0, durationMs: 0 }), status: "waiting_human", pendingApprovalId: gatePending, sessionId: sessionId ?? undefined };
+      }
       if (!result) {
         const error = ac.signal.aborted ? (timedOut ? `timeout after ${Math.round(timeoutMs / 1000)}s` : entry.cancelled ? "cancelled" : "aborted") : "runner ended without a result";
         result = { status: "failed", sessionId: sessionId ?? undefined, text: "", costUsd: 0, inputTokens: 0, outputTokens: 0, numTurns: 0, durationMs: 0, error };
@@ -324,6 +361,10 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
       result = { status: "failed", sessionId: sessionId ?? undefined, text: "", costUsd: 0, inputTokens: 0, outputTokens: 0, numTurns: 0, durationMs: 0, error: msg };
     } finally {
       clearTimeout(timer);
+    }
+    if (result.status === "succeeded" && entry.workspace?.kind === "worktree") {
+      const delta = await workspaceDelta(entry.workspace.path, entry.workspace.startCommit);
+      if (delta && (delta.commits.length || delta.dirty)) entry.delta = delta;
     }
     await finish(entry, result, { timedOut, sessionId, model });
   }
@@ -377,7 +418,7 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
         return;
       }
       if (result.status === "waiting_human") park(task, run, runPatch, structured, result.pendingApprovalId, post);
-      else if (result.status === "succeeded") complete(task, run, runPatch, structured, result, post);
+      else if (result.status === "succeeded") complete(task, run, runPatch, structured, result, post, entry);
       else fail(task, run, runPatch, result.error ?? "unknown error", post);
     });
 
@@ -436,13 +477,21 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
     return run.result?.summary ?? undefined;
   }
 
-  function complete(task: Task, run: Run, runPatch: Partial<Run>, structured: AgentOutput | undefined, result: RunResult, post: Array<() => Promise<void>>): void {
+  function complete(task: Task, run: Run, runPatch: Partial<Run>, structured: AgentOutput | undefined, result: RunResult, post: Array<() => Promise<void>>, entry?: Running): void {
     if (structured?.status === "needs_human" || structured?.needs_human) {
       park(task, run, runPatch, structured, undefined, post);
       return;
     }
     transitionRun(repo, bus, run.id, "succeeded", runPatch as Record<string, unknown>);
     const artifacts = structured ? saveArtifacts(task, run, structured) : [];
+    // Worktree hint: changes on the tc/ branch the agent did not report as an artifact.
+    if (entry?.delta && entry.workspace?.branch && !artifacts.some((a) => a.type === "patch" || a.type === "pr")) {
+      const d = entry.delta;
+      const content = [`branch: ${entry.workspace.branch}`, `workspace: ${entry.workspace.path}`, d.commits.length ? `commits:\n${d.commits.join("\n")}` : "", d.dirty ? `uncommitted files: ${d.dirty}` : "", d.stat].filter(Boolean).join("\n\n");
+      const row = repo.artifacts.create({ task_id: task.id, run_id: run.id, type: "patch", title: `Changes on ${entry.workspace.branch}`, path: entry.workspace.path, content: trimText(content, 16_000), mime: "text/plain" });
+      bus.record({ type: "artifact", task_id: task.id, run_id: run.id, message: `patch: ${row.title}`, payload: { artifact_id: row.id, branch: entry.workspace.branch, commits: d.commits.length, dirty: d.dirty } });
+      artifacts.push(row);
+    }
     if (structured?.learned?.length) {
       try {
         deps.recordLearned(structured.learned, `task:${task.id}`);
@@ -587,7 +636,10 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
       return;
     }
     retryDue();
+    const reserve = Math.max(0, Number(config.brain.budget_usd_per_run) || 0);
     while (running.size < concurrency && !stopping && !paused) {
+      // Reserve the per-run budget for every in-flight run so we never start a run we cannot afford.
+      if (!budget.canSpend(running.size * reserve)) break;
       const cands = candidates();
       if (!cands.length) break;
       let took = false;

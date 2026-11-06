@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for the Task Center daemon (macOS).
+  Install:
+    sed "s|__HOME__|$HOME|g; s|__NODE__|$(dirname "$(command -v node)")|g" deploy/com.agenticinbox.taskcenter.plist \
+      > ~/Library/LaunchAgents/com.agenticinbox.taskcenter.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agenticinbox.taskcenter.plist
+    launchctl kickstart -k gui/$(id -u)/com.agenticinbox.taskcenter
+  Stop / remove:
+    launchctl bootout gui/$(id -u)/com.agenticinbox.taskcenter
+  Logs: ~/agentic-inbox/taskcenter/data/logs/launchd.{out,err}.log and data/logs/taskcenter.jsonl
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agenticinbox.taskcenter</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__/node</string>
+    <string>bin/tc.mjs</string>
+    <string>daemon</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__HOME__/agentic-inbox/taskcenter</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__NODE__:__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>TC_LOG_LEVEL</key>
+    <string>info</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ExitTimeOut</key>
+  <integer>45</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/agentic-inbox/taskcenter/data/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/agentic-inbox/taskcenter/data/logs/launchd.err.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

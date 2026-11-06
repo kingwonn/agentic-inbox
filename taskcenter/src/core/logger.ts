@@ -16,7 +16,7 @@ const SECRET_PATTERNS = [
 export function redact(s: string): string {
   let out = s;
   for (const p of SECRET_PATTERNS) {
-    out = out.replace(p, (m, a, b) => (b !== undefined ? `${a}***` : "***"));
+    out = out.replace(p, (_m, a: string, b: unknown) => (typeof b === "string" ? `${a}***` : "***"));
   }
   return out;
 }
