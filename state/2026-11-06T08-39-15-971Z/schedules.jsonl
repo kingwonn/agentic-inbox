@@ -1,0 +1,8 @@
+{"name":"patrol","cron":"*/15 * * * *","job":"patrol","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
+{"name":"triage","cron":"*/5 * * * *","job":"triage","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
+{"name":"plan","cron":"* * * * *","job":"plan","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
+{"name":"executor_tick","cron":"*/30 * * * * *","job":"executor_tick","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
+{"name":"follow_ups","cron":"2-59/5 * * * *","job":"follow_ups","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
+{"name":"digest","cron":"30 8 * * *","job":"digest","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
+{"name":"context_refresh","cron":"15 7 * * *","job":"context_refresh","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
+{"name":"maintenance","cron":"45 3 * * *","job":"maintenance","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":null}
