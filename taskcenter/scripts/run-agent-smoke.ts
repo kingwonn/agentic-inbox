@@ -171,7 +171,7 @@ async function scenario2() {
   assert(approvals.created.every((a) => a.kind === "action" && (a.payload as { tool?: string }).tool === "Bash"), "approvals carry the Bash payload");
   const pushed = (() => {
     try {
-      return execFileSync("git", ["rev-parse", "--verify", "refs/heads/main"], { cwd: remote, encoding: "utf8" }).trim();
+      return execFileSync("git", ["rev-parse", "--verify", "--quiet", "refs/heads/main"], { cwd: remote, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     } catch {
       return "";
     }

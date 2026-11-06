@@ -96,9 +96,12 @@ export class ClaudeSdkRunner implements Runner {
         if (r.action === "allow") {
           return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: r.reason, ...(r.input && r.input !== h.tool_input ? { updatedInput: r.input } : {}) } };
         }
+        // A hook deny never reaches PostToolUse/PostToolUseFailure, so log the outcome here.
+        emit({ type: "tool_result", tool, toolUseId: id, output: r.reason, isError: true });
         return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: r.reason } };
       } catch (e) {
         log.error(`gate error for ${tool}: ${errorMessage(e)}`);
+        emit({ type: "tool_result", tool, toolUseId: id, output: `gate error: ${errorMessage(e)}`, isError: true });
         return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `gate error: ${errorMessage(e)}` } };
       }
     };
@@ -119,6 +122,7 @@ export class ClaudeSdkRunner implements Runner {
       if (toolName === "StructuredOutput" || UNGATED_TOOLS.has(toolName)) return { behavior: "allow", updatedInput: toolInput };
       const r = await runGate(toolName, toolInput, toolUseID);
       if (r.action === "allow") return { behavior: "allow", updatedInput: r.input ?? toolInput };
+      emit({ type: "tool_result", tool: toolName, toolUseId: toolUseID, output: r.reason, isError: true });
       return { behavior: "deny", message: r.reason, interrupt: !!r.interrupt };
     };
 

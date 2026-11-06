@@ -1,0 +1,17 @@
+export { createApp, type CreateAppOptions } from "./app.js";
+export { startDaemon, type DaemonHandle, type DaemonOptions } from "./daemon.js";
+export { wireServices, getWired, probeModules, type Wired, type WireDeps } from "./wiring.js";
+export { createPatrol, type PatrolService } from "./patrol.js";
+export { createTriage, type TriageService } from "./triage.js";
+export { createPlanner, type PlannerService } from "./plan.js";
+export { createInboxService } from "./inbox.js";
+export { createExecutor, readPendingResume, type ExecutorService } from "./executor.js";
+export { runRecovery, type RecoveryReport } from "./recovery.js";
+export { createScheduler, registerSchedules, runFollowUps, scheduleDefinitions, type SchedulerService } from "./scheduler.js";
+export { runMaintenance, type MaintenanceReport } from "./maintenance.js";
+export { createDigestService, createContextRefresh } from "./digest.js";
+export { exportState, importState, TABLES, type ExportReport, type ImportReport } from "./state-export.js";
+export { collectStatus, statusLine, type StatusSnapshot } from "./status.js";
+export { acquireLock, readLock, cleanStaleLock, LockHeldError } from "./lock.js";
+export { createDryLlm, createDryRunner, createMemoryApprovalService, createConsoleNotifier } from "./dry.js";
+export * from "./types.js";

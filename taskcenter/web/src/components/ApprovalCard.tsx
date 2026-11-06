@@ -112,7 +112,11 @@ export function ApprovalCard({ approval, compact = false, onDecided, showTask = 
           <div className="approval-title" style={{ fontSize: 13 }}>
             {approval.title}
           </div>
-          {approval.recommendation ? <div className="small text-2 truncate">建议：{approval.recommendation}</div> : null}
+          {approval.recommendation ? (
+            <div className="small text-2 truncate" title={approval.recommendation}>
+              💡 {approval.recommendation}
+            </div>
+          ) : null}
           {pending ? (
             <div className="options">
               <Button size="sm" tone="success" busy={busy === "approve"} onClick={() => decide("approve")}>
@@ -212,7 +216,7 @@ export function ApprovalCard({ approval, compact = false, onDecided, showTask = 
                       return decide(o.value);
                     }}
                   >
-                    {o.label || label(DECISION_LABEL, o.value)}
+                    {DECISION_LABEL[o.value] ?? o.label ?? o.value}
                   </Button>
                 ))}
               {!hasEditOption && !editing ? (

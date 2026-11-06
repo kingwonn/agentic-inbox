@@ -46,22 +46,45 @@ function toolSummary(ev: Event): ReactNode {
   );
 }
 
-export function Timeline({ events, showTask = false, emptyText = "暂无事件", dense = false }: { events: Event[]; showTask?: boolean; emptyText?: string; dense?: boolean }) {
-  if (!events.length) return <Empty>{emptyText}</Empty>;
-  let lastDay = "";
-  return (
-    <div className={`timeline ${dense ? "dense" : ""}`}>
-      {events.map((ev) => {
-        const day = ev.ts.slice(0, 10);
-        const showDay = day !== lastDay;
-        lastDay = day;
-        return <TimelineItem key={ev.id} ev={ev} showTask={showTask} dayLabel={showDay ? fmtDate(ev.ts).slice(0, 5) : undefined} />;
-      })}
-    </div>
-  );
+/**
+ * Stable chronological order. Events written within the same millisecond share a
+ * `ts`; the repo tiebreaks on the (random-tailed) id, so we fall back to the
+ * writer's `payload.seq` when present and keep the incoming order otherwise.
+ */
+export function sortChrono(events: Event[]): Event[] {
+  return events
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => {
+      if (a.e.ts !== b.e.ts) return a.e.ts < b.e.ts ? -1 : 1;
+      const sa = typeof a.e.payload?.seq === "number" ? (a.e.payload.seq as number) : null;
+      const sb = typeof b.e.payload?.seq === "number" ? (b.e.payload.seq as number) : null;
+      if (sa !== null && sb !== null && sa !== sb) return sa - sb;
+      return a.i - b.i;
+    })
+    .map((x) => x.e);
 }
 
-function TimelineItem({ ev, showTask, dayLabel }: { ev: Event; showTask: boolean; dayLabel?: string }) {
+export function Timeline({ events, showTask = false, emptyText = "暂无事件", dense = false }: { events: Event[]; showTask?: boolean; emptyText?: string; dense?: boolean }) {
+  if (!events.length) return <Empty>{emptyText}</Empty>;
+  const sorted = sortChrono(events);
+  let lastDay = "";
+  const rows: ReactNode[] = [];
+  for (const ev of sorted) {
+    const day = ev.ts.slice(0, 10);
+    if (day !== lastDay) {
+      lastDay = day;
+      rows.push(
+        <div key={`day-${day}`} className="tl-day">
+          {fmtDate(ev.ts).slice(0, 5)}
+        </div>,
+      );
+    }
+    rows.push(<TimelineItem key={ev.id} ev={ev} showTask={showTask} />);
+  }
+  return <div className={`timeline ${dense ? "dense" : ""}`}>{rows}</div>;
+}
+
+function TimelineItem({ ev, showTask }: { ev: Event; showTask: boolean }) {
   const [open, setOpen] = useState(false);
   const isTool = ev.type === "tool_call" || ev.type === "tool_result";
   const human = ev.payload?.by === "human";
@@ -83,7 +106,6 @@ function TimelineItem({ ev, showTask, dayLabel }: { ev: Event; showTask: boolean
   return (
     <div className={`tl-item level-${ev.level} type-${ev.type} ${human ? "human" : ""}`}>
       <div className="tl-time" title={ev.ts}>
-        {dayLabel ? <span className="muted">{dayLabel} </span> : null}
         {fmtTime(ev.ts)}
       </div>
       <div className="tl-icon" title={label(EVENT_TYPE, ev.type)}>
