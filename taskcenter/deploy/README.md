@@ -30,17 +30,34 @@ Keep `tc` on your PATH with `npm link` (or call `node bin/tc.mjs`).
 
 ## macOS (launchd)
 
+One-shot, from any directory (clones to `~/ai/agentic-inbox` on first run, or uses the
+checkout the script lives in):
+
 ```bash
-sed "s|__HOME__|$HOME|g; s|__NODE__|$(dirname "$(command -v node)")|g" deploy/com.agenticinbox.taskcenter.plist \
+deploy/bootstrap-mac.sh            # prerequisites → clone/update → npm ci → tc init → dashboard → cloud state → doctor
+# fill .env / config/taskcenter.yaml / config/profile.yaml, then:
+deploy/bootstrap-mac.sh service    # doctor must pass; renders + loads the plist, waits for http://127.0.0.1:4800
+deploy/bootstrap-mac.sh verify-restart   # kill -9 the daemon and confirm launchd restarts it
+deploy/bootstrap-mac.sh status     # launchd state + tc status
+```
+
+By hand (the plist uses `__TC_DIR__`, `__NODE__` and `__HOME__` placeholders):
+
+```bash
+TC_DIR="$(pwd)"   # absolute path of taskcenter/
+sed "s|__TC_DIR__|$TC_DIR|g; s|__HOME__|$HOME|g; s|__NODE__|$(dirname "$(command -v node)")|g" deploy/com.agenticinbox.taskcenter.plist \
   > ~/Library/LaunchAgents/com.agenticinbox.taskcenter.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agenticinbox.taskcenter.plist
 launchctl kickstart -k gui/$(id -u)/com.agenticinbox.taskcenter
 tail -f data/logs/taskcenter.jsonl
 ```
 
-Stop: `launchctl bootout gui/$(id -u)/com.agenticinbox.taskcenter`. The agent runs
-in your GUI session, so it sees your Claude Code login and keychain. Adjust
-`WorkingDirectory` if the repo is not at `~/agentic-inbox`.
+Stop: `launchctl bootout gui/$(id -u)/com.agenticinbox.taskcenter` (or `deploy/bootstrap-mac.sh uninstall`).
+The agent runs in your GUI session, so it sees your Claude Code login and keychain. `KeepAlive`
+only restarts after a non-zero exit, so a clean `bootout` stays stopped while a crash (or `kill -9`)
+is restarted within `ThrottleInterval` seconds. If `claude`, `gh` or `codex` live outside
+`/opt/homebrew/bin`, `/usr/local/bin` or `~/.local/bin`, the script adds their directories to the
+plist `PATH`; add them yourself when installing by hand.
 
 ## Linux (systemd --user)
 
@@ -92,7 +109,8 @@ planning also skip) until the next day or `POST /api/executor/resume` /
 When the local daemon is off, a Claude Code scheduled task can keep "eyes" on your
 sources: it runs `tc patrol --once && tc triage && tc state export` in a cloud
 session and commits the export to the `taskcenter-state` branch; the local daemon
-imports it when it is back. Exact prompt and the import side: see
+imports it when it is back: `deploy/import-cloud-state.sh` (idempotent, run it from cron or
+after `bootstrap-mac.sh setup`, which already calls it once). Exact prompt and details: see
 [`cloud-patrol.md`](./cloud-patrol.md).
 
 ## Security notes

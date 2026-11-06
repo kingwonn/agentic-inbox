@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:web": "npm --prefix web run build",
+    "build:web": "npm --prefix web ci --no-audit --no-fund && npm --prefix web run build",
     "dev": "node --no-warnings=ExperimentalWarning --import tsx src/cli.ts",
     "tc": "node --no-warnings=ExperimentalWarning --import tsx src/cli.ts",
     "daemon": "node --no-warnings=ExperimentalWarning --import tsx src/cli.ts daemon",

@@ -65,7 +65,7 @@ tc state export|import <dir>  # 迁移 / 云端同步
 
 ## 部署
 
-- 本地长期运行：`deploy/` 内有 systemd / launchd / pm2 模板。
+- 本地长期运行：`deploy/` 内有 systemd / launchd / pm2 模板；macOS 一键安装与常驻：`deploy/bootstrap-mac.sh`（`setup` → 填 `.env` → `service` → `verify-restart`）。
 - 云端心跳（笔记本关机时仍然巡检）：见 `deploy/cloud-patrol.md`，用 Claude Code 的定时任务执行 `tc patrol --once && tc triage && tc state export`。
 
 ## 开发

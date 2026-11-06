@@ -67,30 +67,23 @@ are always exported in full and merged by primary/unique key with "newest
 
 ## 3. Local side: importing the cloud state
 
-The local daemon merges exports with `tc state import <dir>`. Automate it with a
-small script run before/after the daemon starts, or from cron every 15 minutes:
+The local daemon merges exports with `tc state import <dir>`. `deploy/import-cloud-state.sh`
+does that for every export newer than the last one applied (remembered in
+`data/.last-cloud-import`); `--all` re-applies everything. It reads the branch with
+`git archive` from the repository root, so the current branch and index are never touched.
 
 ```bash
-#!/usr/bin/env bash
-# deploy/import-cloud-state.sh — merge the newest cloud export into the local DB
-set -euo pipefail
-cd "$(dirname "$0")/.."
-git fetch -q origin taskcenter-state
-tmp=$(mktemp -d)
-git --work-tree="$tmp" checkout -q origin/taskcenter-state -- state
-latest=$(ls -d "$tmp"/state/*/ | sort | tail -1)
-last_done=$(cat data/.last-cloud-import 2>/dev/null || true)
-if [ "$latest" != "" ] && [ "$(basename "$latest")" != "$last_done" ]; then
-  node bin/tc.mjs state import "$latest"
-  basename "$latest" > data/.last-cloud-import
-fi
-rm -rf "$tmp"
+deploy/import-cloud-state.sh          # run after `bootstrap-mac.sh setup`, from cron, or before starting the daemon
+deploy/import-cloud-state.sh --all    # idempotent re-import
 ```
 
 Because imports are keyed and idempotent, it is safe to run the daemon and the
 import at the same time (SQLite WAL + busy timeout). Tasks created in the cloud
-arrive as `todo`/`ready` and are planned/executed locally; approvals requested in
-the cloud (none, since nothing runs there) would arrive as pending Outbox items.
+arrive as `todo`/`ready` and are planned/executed locally; a task that was still
+`running` in the cloud when the export was taken is re-queued by the daemon's
+recovery on the next start (cancel or mark it done first if the work was already
+delivered, e.g. `tc tasks done <id>`). Approvals requested in the cloud arrive as
+pending Outbox items.
 
 ## 4. What to expect
 

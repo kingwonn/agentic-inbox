@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   launchd agent for the Task Center daemon (macOS).
-  Install:
-    sed "s|__HOME__|$HOME|g; s|__NODE__|$(dirname "$(command -v node)")|g" deploy/com.agenticinbox.taskcenter.plist \
-      > ~/Library/LaunchAgents/com.agenticinbox.taskcenter.plist
+  Placeholders: __TC_DIR__ = absolute path of taskcenter/, __NODE__ = directory of the node binary,
+  __HOME__ = your home. Easiest: `deploy/bootstrap-mac.sh service` renders and loads this file.
+  By hand:
+    TC_DIR="$(cd taskcenter && pwd)"
+    sed "s|__TC_DIR__|$TC_DIR|g; s|__HOME__|$HOME|g; s|__NODE__|$(dirname "$(command -v node)")|g" \
+      "$TC_DIR/deploy/com.agenticinbox.taskcenter.plist" > ~/Library/LaunchAgents/com.agenticinbox.taskcenter.plist
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agenticinbox.taskcenter.plist
     launchctl kickstart -k gui/$(id -u)/com.agenticinbox.taskcenter
   Stop / remove:
     launchctl bootout gui/$(id -u)/com.agenticinbox.taskcenter
-  Logs: ~/agentic-inbox/taskcenter/data/logs/launchd.{out,err}.log and data/logs/taskcenter.jsonl
+  Logs: <taskcenter>/data/logs/launchd.{out,err}.log and data/logs/taskcenter.jsonl
 -->
 <plist version="1.0">
 <dict>
@@ -21,7 +24,7 @@
     <string>daemon</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>__HOME__/agentic-inbox/taskcenter</string>
+  <string>__TC_DIR__</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -45,9 +48,9 @@
   <key>ExitTimeOut</key>
   <integer>45</integer>
   <key>StandardOutPath</key>
-  <string>__HOME__/agentic-inbox/taskcenter/data/logs/launchd.out.log</string>
+  <string>__TC_DIR__/data/logs/launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>__HOME__/agentic-inbox/taskcenter/data/logs/launchd.err.log</string>
+  <string>__TC_DIR__/data/logs/launchd.err.log</string>
   <key>ProcessType</key>
   <string>Background</string>
 </dict>
