@@ -78,7 +78,7 @@ export function Button({
   busy,
 }: {
   children: ReactNode;
-  onClick?: () => void | Promise<void>;
+  onClick?: () => unknown;
   tone?: "default" | "primary" | "danger" | "ghost" | "success";
   size?: "sm" | "md";
   disabled?: boolean;
@@ -99,7 +99,7 @@ export function Button({
         onClick
           ? async () => {
               const r = onClick();
-              if (r && typeof (r as Promise<void>).then === "function") {
+              if (r && typeof (r as Promise<unknown>).then === "function") {
                 setPending(true);
                 try {
                   await r;

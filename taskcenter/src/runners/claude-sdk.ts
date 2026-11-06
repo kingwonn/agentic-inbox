@@ -134,7 +134,11 @@ export class ClaudeSdkRunner implements Runner {
       settingSources: [],
       strictMcpConfig: true,
       mcpServers,
-      allowedTools: input.allowedTools,
+      // Bare tool names in allowedTools would auto-approve calls before any gate runs (and make the
+      // SDK warn CLAUDE_SDK_CAN_USE_TOOL_SHADOWED). The PreToolUse hook decides allow/deny for every
+      // call, so only scoped rules such as "Bash(npm test *)" are forwarded; everything else reaches
+      // the hook and, as a fallback, canUseTool.
+      allowedTools: input.allowedTools.filter((t) => t.includes("(")),
       disallowedTools: input.disallowedTools,
       permissionMode: "default",
       canUseTool,

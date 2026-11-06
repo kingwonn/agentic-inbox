@@ -26,7 +26,8 @@ afterAll(() => {
 
 function setup(level: 1 | 2 | 3 | 4 | 5 = 3, over: Partial<Parameters<typeof task>[0]> = {}) {
   const { repo, bus, logger } = mem();
-  const t = repo.tasks.create({ ...task(over), id: undefined as unknown as string, level });
+  const { id: _id, created_at: _c, updated_at: _u, ...rest } = task(over);
+  const t = repo.tasks.create({ ...rest, level });
   const run = repo.runs.create({ task_id: t.id, runner: "dry", model: "haiku" });
   const approvals = new FakeApprovals(repo);
   const workspace = tmp();

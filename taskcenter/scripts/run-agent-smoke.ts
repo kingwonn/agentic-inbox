@@ -129,7 +129,7 @@ async function scenario1() {
   writeFileSync(join(ws, "README-task.md"), "# smoke\nscratch workspace\n");
   const { events, result } = await runScenario("Scenario 1: write hello.txt (L3)", {
     title: "List the files in this workspace and write a file hello.txt containing 'hi'",
-    description: "List the files in the current workspace directory, then create a file named hello.txt whose entire content is the text hi (followed by a newline). Register it with deliver_artifact and finish.",
+    description: "List the files in the current workspace directory, then create a file named hello.txt whose entire content is the text hi (followed by a newline). Create the file with the Write tool (not a shell redirect). Register it with deliver_artifact and finish.",
     workspace: ws,
     category: "other",
     criteria: ["hello.txt exists in the workspace and contains hi"],

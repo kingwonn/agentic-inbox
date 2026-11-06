@@ -22,12 +22,17 @@ type Route = (query: URLSearchParams) => GithubApiResult;
 
 /** Route table keyed by path (without query string); counts calls per path. */
 class FakeApi implements GithubApi {
-  readonly mode = "token" as const;
   calls: string[] = [];
-  constructor(public routes: Record<string, Route | unknown>) {}
+  /** When set, every request returns this result (e.g. a 401). */
+  fail?: GithubApiResult;
+  constructor(
+    public routes: Record<string, Route | unknown>,
+    readonly mode: "token" | "gh" = "token",
+  ) {}
   async request<T>(path: string): Promise<GithubApiResult<T>> {
     const [p, qs] = path.split("?");
     this.calls.push(p);
+    if (this.fail) return this.fail as GithubApiResult<T>;
     const route = this.routes[p];
     if (route === undefined) return { ok: false, status: 404, data: undefined, error: "HTTP 404: Not Found" };
     const r = typeof route === "function" ? (route as Route)(new URLSearchParams(qs ?? "")) : { ok: true, status: 200, data: route };
@@ -128,7 +133,7 @@ function routes(overrides: Record<string, Route | unknown> = {}): Record<string,
 }
 
 function setup(api: GithubApi, config: Record<string, unknown> = {}) {
-  const sensor = createGithubSensor({ api: () => api });
+  const sensor = createGithubSensor({ api: () => api, hasGh: () => true });
   const h = harness();
   const entry: SensorEntry = {
     sensor,
@@ -300,12 +305,69 @@ describe("sensors/github poll (mocked api)", () => {
     const h = harness();
     const entry: SensorEntry = { sensor, config: { enabled: true, repos: [REPO], token: "", use_gh_cli: true }, enabled: true };
     await expect(sensor.poll(makeSensorContext(entry, { repo: h.repo, logger: silentLogger, loaded: h.loaded }))).rejects.toBeInstanceOf(SensorConfigError);
-    // a 401 from the API (bad token) is misconfiguration too
-    const bad = setup(new FakeApi(routes({ [BASE]: () => ({ ok: false, status: 401, data: undefined, error: "HTTP 401: Bad credentials" }) })), { include_searches: false });
-    await expect(bad.poll()).rejects.toThrow(/bad credentials/);
+    // a 401 with no other auth path is misconfiguration too
+    const only = new FakeApi(routes(), "token");
+    only.fail = { ok: false, status: 401, data: undefined, error: "HTTP 401: Bad credentials" };
+    const bad = createGithubSensor({ api: (_c, mode) => (mode === "token" ? only : undefined), hasGh: () => false });
+    const badEntry: SensorEntry = { sensor: bad, config: { enabled: true, repos: [REPO], token: "ghp_bad", use_gh_cli: true, include_searches: false, include_notifications: false }, enabled: true };
+    await expect(bad.poll(makeSensorContext(badEntry, { repo: h.repo, logger: silentLogger, loaded: h.loaded }))).rejects.toThrow(/bad credentials/);
     expect(sensor.configured({ repos: [], use_gh_cli: true })).toBe(false);
     expect(sensor.configured({ repos: [REPO], use_gh_cli: false, token: "" })).toBe(false);
     expect(sensor.configured({ repos: [REPO], use_gh_cli: false, token: "ghp_x" })).toBe(true);
+  });
+});
+
+describe("sensors/github auth fallback", () => {
+  function fallbackSetup(opts: { ghFails?: boolean; hasGh?: boolean } = {}) {
+    const tokenApi = new FakeApi(routes(), "token");
+    tokenApi.fail = { ok: false, status: 401, data: undefined, error: "HTTP 401: Bad credentials" };
+    const ghApi = new FakeApi(routes(), "gh");
+    if (opts.ghFails) ghApi.fail = { ok: false, status: 401, data: undefined, error: "HTTP 401: gh not logged in" };
+    const sensor = createGithubSensor({ api: (_c, mode) => (mode === "token" ? tokenApi : ghApi), hasGh: () => opts.hasGh ?? true });
+    const h = harness();
+    const config: Record<string, unknown> = { enabled: true, repos: [REPO], token: "ghp_bad", use_gh_cli: true, include_notifications: false, include_searches: false, locale: "en" };
+    const poll = () => sensor.poll(makeSensorContext({ sensor, config, enabled: true }, { repo: h.repo, logger: silentLogger, loaded: h.loaded, now: () => NOW }));
+    return { tokenApi, ghApi, h, config, poll };
+  }
+
+  it("falls back to gh on 401 for the rest of the poll and remembers it per token", async () => {
+    const s = fallbackSetup();
+    const r1 = await s.poll();
+    expect(r1.signals.some((x) => x.external_id === `pr:${REPO}#1`)).toBe(true);
+    expect(r1.warnings?.some((w) => /token auth rejected .*falling back to gh/.test(w))).toBe(true);
+    expect(r1.summary).toContain("via gh");
+    expect(s.tokenApi.calls.length).toBe(1); // first call failed, everything else went to gh
+    expect(s.ghApi.calls[0]).toBe(BASE); // the failed request was retried on gh
+    const remembered = JSON.parse(s.h.repo.cursors.get("github", "auth_mode")!);
+    expect(remembered).toMatchObject({ mode: "gh" });
+    expect(s.h.repo.cursors.get("github", `updated_since:${REPO}`)).toBe(NOW.toISOString());
+
+    // next poll: straight to gh, no token attempt, no warning
+    const r2 = await s.poll();
+    expect(s.tokenApi.calls.length).toBe(1);
+    expect(r2.warnings ?? []).toEqual([]);
+    expect(r2.summary).toContain("via gh");
+
+    // a changed token is tried again (and falls back again)
+    s.config.token = "ghp_new";
+    const r3 = await s.poll();
+    expect(s.tokenApi.calls.length).toBe(2);
+    expect(r3.summary).toContain("via gh");
+    expect(JSON.parse(s.h.repo.cursors.get("github", "auth_mode")!).token_hash).not.toBe(remembered.token_hash);
+
+    // a token that works again clears the remembered gh mode
+    s.config.token = "ghp_good";
+    s.tokenApi.fail = undefined;
+    const r4 = await s.poll();
+    expect(r4.summary).toContain("via token");
+    expect(JSON.parse(s.h.repo.cursors.get("github", "auth_mode")!)).toMatchObject({ mode: "token" });
+    const r5 = await s.poll();
+    expect(r5.summary).toContain("via token");
+  });
+
+  it("throws SensorConfigError only when neither auth path works", async () => {
+    await expect(fallbackSetup({ ghFails: true }).poll()).rejects.toThrow(/bad credentials for both token and gh/);
+    await expect(fallbackSetup({ hasGh: false }).poll()).rejects.toBeInstanceOf(SensorConfigError);
   });
 });
 

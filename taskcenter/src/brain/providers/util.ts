@@ -42,20 +42,27 @@ export function extractFirstJson(text: string): unknown {
 /** Last balanced JSON object in text (used for agent final messages). */
 export function extractLastJsonObject(text: string): unknown {
   if (!text) return undefined;
+  let best: { at: number; value: unknown } | undefined;
   const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
   for (let i = fences.length - 1; i >= 0; i--) {
     const v = tryParse(fences[i][1].trim());
-    if (v && typeof v === "object" && !Array.isArray(v)) return v;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      best = { at: fences[i].index ?? 0, value: v };
+      break;
+    }
   }
   for (let i = text.length - 1; i >= 0; i--) {
     if (text[i] !== "}") continue;
     const start = balancedStart(text, i);
     if (start >= 0) {
       const v = tryParse(text.slice(start, i + 1));
-      if (v && typeof v === "object" && !Array.isArray(v)) return v;
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        if (!best || start > best.at) best = { at: start, value: v };
+        break;
+      }
     }
   }
-  return undefined;
+  return best?.value;
 }
 
 function tryParse(s: string): unknown {

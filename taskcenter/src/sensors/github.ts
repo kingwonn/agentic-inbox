@@ -17,7 +17,7 @@
 import type { NewSignal } from "../core/types.js";
 import { t } from "./i18n.js";
 import type { Sensor, SensorContext, SensorPollResult } from "./types.js";
-import { commandExists, errorMessage, excerpt, fetchJson, runCommand, SensorConfigError, truncate, Warnings } from "./util.js";
+import { commandExists, errorMessage, excerpt, fetchJson, runCommand, SensorConfigError, sha1, truncate, Warnings } from "./util.js";
 
 export const GITHUB_SOURCE = "github";
 const API_BASE = "https://api.github.com";
@@ -269,11 +269,17 @@ function daysBetween(a: Date, b: Date): number {
 
 class CallBudget {
   calls = 0;
+  fellBack = false;
   constructor(
     private api: GithubApi,
+    private fallback: GithubApi | undefined,
     private max: number,
     private warnings: Warnings,
+    private onFallback: (from: GithubApi, to: GithubApi) => void,
   ) {}
+  get mode(): GithubApi["mode"] {
+    return this.api.mode;
+  }
   get exhausted(): boolean {
     return this.calls >= this.max;
   }
@@ -283,10 +289,23 @@ class CallBudget {
       return { ok: false, status: 0, data: undefined, error: "budget exhausted" };
     }
     this.calls++;
-    const r = await this.api.request<T>(path);
-    // 401 = the configured token/gh login is invalid: misconfiguration, not a transient problem
-    if (r.status === 401) throw new SensorConfigError(`github: bad credentials (${this.api.mode}): ${r.error ?? "HTTP 401"}`);
-    return r;
+    let r = await this.api.request<T>(path);
+    if (r.status !== 401) return r;
+    // 401 = the configured token / gh login is invalid. Fall back to the other auth path
+    // for the rest of this poll when one exists; only give up when neither works.
+    if (this.fallback) {
+      const from = this.api;
+      this.api = this.fallback;
+      this.fallback = undefined;
+      this.fellBack = true;
+      this.warnings.add(`github ${from.mode} auth rejected (${r.error ?? "HTTP 401"}); falling back to ${this.api.mode} for this and later polls`);
+      this.onFallback(from, this.api);
+      this.calls++;
+      r = await this.api.request<T>(path);
+      if (r.status === 401) throw new SensorConfigError(`github: bad credentials for both ${from.mode} and ${this.api.mode} (${r.error ?? "HTTP 401"})`);
+      return r;
+    }
+    throw new SensorConfigError(`github: bad credentials (${this.api.mode}): ${r.error ?? "HTTP 401"}`);
   }
   /** Paginated GET (per_page must already be in the path). */
   async list<T>(path: string, maxPages: number): Promise<{ items: T[]; ok: boolean; error?: string; status: number }> {
@@ -306,10 +325,16 @@ class CallBudget {
 // ── Sensor ──────────────────────────────────────────────────────────
 
 export interface GithubSensorOptions {
-  /** Build the API client from the sensor config (tests inject a fake). */
-  api?: (config: Record<string, unknown>) => GithubApi;
+  /** Build the API client for an auth mode from the sensor config (tests inject fakes); undefined = mode unavailable. */
+  api?: (config: Record<string, unknown>, mode: GithubApi["mode"]) => GithubApi | undefined;
   hasGh?: () => boolean;
   fetchImpl?: typeof fetch;
+}
+
+interface AuthModeCursor {
+  mode: GithubApi["mode"];
+  token_hash: string;
+  at?: string;
 }
 
 function parseRepo(full: string): { owner: string; name: string; full: string } | null {
@@ -320,12 +345,36 @@ function parseRepo(full: string): { owner: string; name: string; full: string } 
 export function createGithubSensor(opts: GithubSensorOptions = {}): Sensor {
   const hasGh = opts.hasGh ?? (() => commandExists("gh"));
 
-  function buildApi(config: Record<string, unknown>): GithubApi {
-    if (opts.api) return opts.api(config);
+  /**
+   * Pick the auth path: `token` first (with `gh` as fallback when use_gh_cli and gh exist),
+   * unless an earlier poll already fell back for this same token (cursor `auth_mode`),
+   * in which case go straight to `gh`. A changed token is tried again.
+   */
+  function selectApis(ctx: SensorContext): { primary: GithubApi; fallback?: GithubApi; tokenHash: string; remembered: AuthModeCursor | null } {
+    const config = ctx.config;
     const token = typeof config.token === "string" ? config.token.trim() : "";
-    if (token) return createTokenApi(token, opts.fetchImpl);
-    if (config.use_gh_cli !== false && hasGh()) return createGhCliApi();
-    throw new SensorConfigError("github: set sensors.github.token or install/authenticate the `gh` CLI (use_gh_cli)");
+    const ghOk = config.use_gh_cli !== false && hasGh();
+    const tokenHash = token ? sha1(token).slice(0, 12) : "";
+    const make = (mode: GithubApi["mode"]): GithubApi | undefined => {
+      if (mode === "token" && !token) return undefined;
+      if (mode === "gh" && !ghOk) return undefined;
+      if (opts.api) return opts.api(config, mode);
+      return mode === "token" ? createTokenApi(token, opts.fetchImpl) : createGhCliApi();
+    };
+    const remembered = ctx.cursors.getJson<AuthModeCursor | null>("auth_mode", null);
+    const ghFirst = remembered?.mode === "gh" && remembered.token_hash === tokenHash;
+    let primary: GithubApi | undefined;
+    let fallback: GithubApi | undefined;
+    if (ghFirst) {
+      primary = make("gh") ?? make("token");
+    } else {
+      primary = make("token");
+      if (primary) fallback = make("gh");
+      else primary = make("gh");
+    }
+    if (!primary) throw new SensorConfigError("github: set sensors.github.token or install/authenticate the `gh` CLI (use_gh_cli)");
+    if (fallback === primary) fallback = undefined;
+    return { primary, fallback, tokenHash, remembered };
   }
 
   return {
@@ -346,8 +395,14 @@ export function createGithubSensor(opts: GithubSensorOptions = {}): Sensor {
       const now = ctx.now();
       const repos = ((ctx.config.repos as string[] | undefined) ?? []).map(parseRepo).filter((r): r is NonNullable<typeof r> => r !== null);
       if (repos.length === 0) throw new SensorConfigError("github: sensors.github.repos is empty");
-      const api = buildApi(ctx.config);
-      const budget = new CallBudget(api, MAX_CALLS_PER_POLL, warnings);
+      const { primary, fallback, tokenHash, remembered } = selectApis(ctx);
+      const budget = new CallBudget(primary, fallback, MAX_CALLS_PER_POLL, warnings, (from, to) => {
+        ctx.cursors.setJson("auth_mode", { mode: to.mode, token_hash: tokenHash, at: now.toISOString() } satisfies AuthModeCursor);
+        ctx.logger.warn(`github ${from.mode} credentials rejected (401); using ${to.mode} from now on (until the token changes)`);
+      });
+      if (remembered && remembered.mode === "gh" && primary.mode === "gh" && remembered.token_hash === tokenHash) {
+        ctx.logger.debug("github: using gh (remembered fallback for the configured token)");
+      }
       const configured = new Set(repos.map((r) => r.full));
       const user = typeof ctx.config.user === "string" && ctx.config.user.trim() ? ctx.config.user.trim() : "@me";
 
@@ -756,7 +811,11 @@ export function createGithubSensor(opts: GithubSensorOptions = {}): Sensor {
         }
       }
 
-      const summary = `${repoOk}/${repos.length} repos via ${api.mode}, ${budget.calls} api calls, ${signals.length} signals`;
+      // token worked this poll (no fallback): forget an older fallback record for a different token
+      if (!budget.fellBack && budget.mode === "token" && remembered && remembered.mode !== "token") {
+        ctx.cursors.setJson("auth_mode", { mode: "token", token_hash: tokenHash, at: now.toISOString() } satisfies AuthModeCursor);
+      }
+      const summary = `${repoOk}/${repos.length} repos via ${budget.mode}, ${budget.calls} api calls, ${signals.length} signals`;
       ctx.logger.info(`github poll: ${summary}`);
       return { signals, warnings: warnings.list, summary };
     },

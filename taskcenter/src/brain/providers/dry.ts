@@ -138,7 +138,7 @@ export class DryLlmProvider implements LlmProvider {
         subtasks: [],
       };
     }
-    if (purpose === "digest") return "（dry）今日摘要未经润色。";
+    if (purpose === "digest") return `(dry polish — unchanged)\n${req.prompt}`;
     if (purpose === "profile-suggestions") return "- (dry) no profile changes suggested";
     return req.jsonSchema ? {} : `dry response for ${purpose || "prompt"}`;
   }
