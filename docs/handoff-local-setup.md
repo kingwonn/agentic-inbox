@@ -29,6 +29,8 @@
 6. **验证并启动**：`npm run tc -- doctor` → 无 ✗ 后 `npm run tc -- patrol`（看 Inbox 是否有东西）→ `npm run tc -- daemon`，打开 http://127.0.0.1:4800 检查看板。（`daemon not running`、`gh 未登录` 这类 `!` 警告不影响启动。）
 7. **常驻**：`deploy/bootstrap-mac.sh service`（先跑 doctor，再用真实的 node 路径和仓库目录渲染 plist、`launchctl bootstrap`、等看板应答），然后 `deploy/bootstrap-mac.sh verify-restart`（`kill -9` 守护进程，确认 launchd 自动拉起；注意 `KeepAlive.SuccessfulExit=false` 只在非零退出后重启，所以用 SIGTERM 正常退出不会重启）。手动做法见 `taskcenter/deploy/README.md`，plist 里的占位符是 `__TC_DIR__`（taskcenter 绝对路径）、`__NODE__`、`__HOME__`。
 8. **Codex（可选）**：`npm i -g @openai/codex && codex login`（用 ChatGPT 账号），`codex --version` 正常后运行器自动可用；代码类任务可在看板任务详情里把 runner 设为 `codex`。
-9. **汇报**：doctor 输出、守护进程状态、看板截图、Outbox 待审批项。导入 `taskcenter-state` 的两份导出后，Outbox 有两项待决定：`apr_0mw4pxrbjly9ghu6y`「是否批准将 PR #1 合并到 sparkai-email」，以及 `apr_0mw4q6rz3v08c0ib8`「批准推送分支 tc/tsk_0mw4q53exbs4rbb6z 到 origin」。USAGE.md 任务在最新导出里已是 done，无需处理。注意推送那一项：分支里的提交只存在于已销毁的云容器、从未推送，本机也没有那个 Claude 会话（`claude --resume` 会报 No conversation found）。在本机批准后，首轮续跑会失败，再按重试规则开新会话从头重写测试并重新申请推送；不想重做就拒绝它。
+9. **汇报**：doctor 输出、守护进程状态、看板截图、Outbox 待审批项。导入 `taskcenter-state` 的两份导出后，Outbox 有两项：`apr_0mw4pxrbjly9ghu6y`「是否批准将 PR #1 合并到 sparkai-email」和 `apr_0mw4q6rz3v08c0ib8`「批准推送分支 tc/tsk_0mw4q53exbs4rbb6z 到 origin」。USAGE.md 任务在最新导出里已是 done。
+   - **PR #1 用户已决定：不合并，只作借鉴**（已写入 `config/profile.yaml`）。不要在 Outbox 里点「暂不合并」：那会续跑云端会话而本机没有该会话，续跑失败后会按重试规则从头重新评审。直接取消任务，它会连带关闭这条审批：`npm run tc -- tasks cancel tsk_0mw4pv83ess6u9vo7 "用户决定不合并 PR #1，只作借鉴"`。GitHub 上的 PR 保持原样，不要合并或关闭。
+   - 推送测试分支那项仍待用户决定。分支里的提交只存在于已销毁的云容器、从未推送，本机续跑同样会因 `No conversation found` 失败后从头重写测试；不要就用 `tasks cancel tsk_0mw4q53exbs4rbb6z` 取消。
 
 参考：`taskcenter/README.md`、`taskcenter/USAGE.md`、`taskcenter/deploy/README.md`、`docs/runbook.md`。

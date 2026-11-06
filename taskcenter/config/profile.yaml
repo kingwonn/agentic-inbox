@@ -17,9 +17,9 @@ roles:
 projects:
   - name: "SparkAI"
     status: active
-    summary: "AI product; integrates email (the agentic-inbox fork) as a channel"
+    summary: "AI product; integrates email (the agentic-inbox fork) as a channel. 旧的 sparkai-email 工作（PR #1，分支 codex/analyze-project-for-sparkai-integration）不合并，只作借鉴参考，新实现另起分支"
     repos: [kingwonn/agentic-inbox]
-    goals: ["Ship email integration", "Keep MCP tools usable from Claude Code / Codex"]
+    goals: ["Ship email integration", "Keep MCP tools usable from Claude Code / Codex", "借鉴 PR #1 的邮箱自动解析：只有一个邮箱时自动选中，零个或多个时给出明确错误；删除、外发类工具仍要求显式 mailboxId"]
     priority: P1
   - name: "Agentic Inbox Task Center"
     status: active
@@ -65,4 +65,4 @@ standing_orders:
   triggers: ["new PR or issue on my repos", "email that asks me a question", "calendar event in the next 24h that needs prep"]
   approval_gates: ["external communication", "publishing", "pushing to main", "deleting data", "payments"]
   escalation: "If an attempt fails twice, stop and ask with a clear recommendation."
-  never: ["share credentials", "take irreversible actions without approval", "invent facts about my projects"]
+  never: ["share credentials", "take irreversible actions without approval", "invent facts about my projects", "merge PR #1 or the old sparkai-email work (decided 2026-11-06: reference only)"]
