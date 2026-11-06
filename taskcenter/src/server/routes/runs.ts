@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppContext } from "../../core/app.js";
 import { RUN_STATUSES } from "../../core/types.js";
-import { intParam, listParam, notFound, oneOf, pageOf, strParam } from "../util.js";
+import { intParam, listParam, notFound, oneOf, pageOf, sortChrono, strParam } from "../util.js";
 
 export function runsRoutes(ctx: AppContext) {
   const app = new Hono();
@@ -21,7 +21,7 @@ export function runsRoutes(ctx: AppContext) {
     const run = repo.runs.get(c.req.param("id"));
     if (!run) throw notFound("run not found");
     const limit = intParam(c, "limit", 500, 5000, 1);
-    const events = repo.events.list({ run_id: run.id, limit }).reverse(); // chronological
+    const events = sortChrono(repo.events.list({ run_id: run.id, limit }).reverse()); // chronological, seq-stable
     const task = repo.tasks.get(run.task_id) ?? null;
     const approvals = repo.approvals.list({ task_id: run.task_id, limit: 100 }).filter((a) => a.run_id === run.id);
     const artifacts = repo.artifacts.listByTask(run.task_id).filter((a) => a.run_id === run.id);

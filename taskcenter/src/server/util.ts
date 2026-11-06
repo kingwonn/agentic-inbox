@@ -93,6 +93,26 @@ export function sumCounts(c: Record<string, number>): number {
   return Object.values(c).reduce((a, b) => a + b, 0);
 }
 
+/**
+ * Stable chronological order for events. Events recorded in the same millisecond
+ * share `ts` and the repo tiebreaks on the random-tailed id, so bursts (tool_call
+ * + tool_result, run_started + status_change) can come back scrambled. Writers
+ * that emit bursts include a monotonic `payload.seq`; we honour it and otherwise
+ * keep the incoming order.
+ */
+export function sortChrono<T extends { ts: string; payload: Record<string, unknown> }>(events: T[]): T[] {
+  return events
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => {
+      if (a.e.ts !== b.e.ts) return a.e.ts < b.e.ts ? -1 : 1;
+      const sa = typeof a.e.payload?.seq === "number" ? (a.e.payload.seq as number) : null;
+      const sb = typeof b.e.payload?.seq === "number" ? (b.e.payload.seq as number) : null;
+      if (sa !== null && sb !== null && sa !== sb) return sa - sb;
+      return a.i - b.i;
+    })
+    .map((x) => x.e);
+}
+
 /** Resolve a value that may be a thenable or plain. */
 export async function maybeAsync<T>(v: T | Promise<T>): Promise<T> {
   return await v;

@@ -503,7 +503,7 @@ export class EventRepo {
     }
     params.push(opts.limit ?? 200, opts.offset ?? 0);
     return this.db
-      .all(`SELECT * FROM events WHERE ${where} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, ...params)
+      .all(`SELECT * FROM events WHERE ${where} ORDER BY ts DESC, rowid DESC LIMIT ? OFFSET ?`, ...params)
       .map((r) => fromRow<Event>(r, EVENT_JSON, EVENT_DEFAULTS)!);
   }
 
