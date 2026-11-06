@@ -23,7 +23,9 @@ export function buildClaudeCliArgs(req: LlmRequest): string[] {
     "--output-format",
     "json",
     "--max-turns",
-    "1",
+    // With --json-schema the answer is delivered through an injected StructuredOutput tool call,
+    // which consumes a turn of its own; 1 turn would end with error_max_turns.
+    useJsonSchema(req) ? "3" : "1",
     "--tools",
     "",
     "--no-session-persistence",
@@ -35,8 +37,18 @@ export function buildClaudeCliArgs(req: LlmRequest): string[] {
   ];
   if (req.effort) args.push("--effort", req.effort);
   if (req.system) args.push("--system-prompt", req.system);
-  if (req.jsonSchema) args.push("--json-schema", JSON.stringify(req.jsonSchema));
+  if (useJsonSchema(req)) args.push("--json-schema", JSON.stringify(req.jsonSchema));
   return args;
+}
+
+/**
+ * Whether to let the CLI enforce the schema (`--json-schema`). Off by default: in nested
+ * Claude Code environments the structured-output tool has been observed to return empty
+ * objects, while a plain "respond with JSON" instruction + zod validation is reliable and
+ * cheaper (one turn). Set TC_CLI_JSON_SCHEMA=1 to opt in.
+ */
+export function useJsonSchema(req: LlmRequest): boolean {
+  return !!req.jsonSchema && process.env.TC_CLI_JSON_SCHEMA === "1";
 }
 
 interface CliResult {
@@ -86,7 +98,11 @@ export class ClaudeCliProvider implements LlmProvider {
     const started = Date.now();
     const args = buildClaudeCliArgs(req);
     // --json-schema enforces the shape; the trailing hint helps when the CLI falls back to text.
-    const prompt = req.jsonSchema ? `${req.prompt}\n\nRespond with a single JSON object matching the required schema.` : req.prompt;
+    const prompt = req.jsonSchema
+      ? useJsonSchema(req)
+        ? `${req.prompt}\n\nRespond with a single JSON object matching the required schema.`
+        : `${req.prompt}\n\nRespond with ONLY a single JSON object (no prose, no markdown fences) that matches this JSON schema:\n${JSON.stringify(req.jsonSchema)}`
+      : req.prompt;
     const timeoutMs = req.timeoutMs ?? this.defaultTimeoutMs;
 
     const { stdout, stderr, code, signal } = await runProcess(this.bin, args, prompt, { timeoutMs, signal: req.signal, env: cleanClaudeEnv({ DISABLE_TELEMETRY: "1" }) });
@@ -112,7 +128,7 @@ export class ClaudeCliProvider implements LlmProvider {
     if (!parsed) {
       throw new Error(`claude -p produced no JSON (exit ${code}): ${(stderr || stdout).slice(0, 500)}`);
     }
-    if (parsed.is_error && parsed.subtype !== "success") {
+    if (parsed.is_error && parsed.subtype !== "success" && !(parsed.subtype === "error_max_turns" && parsed.structured_output !== undefined)) {
       throw new Error(`claude -p error ${parsed.subtype ?? ""}: ${(parsed.errors ?? []).join("; ") || parsed.result || stderr.slice(0, 300)}`);
     }
     const text = typeof parsed.result === "string" ? parsed.result : "";

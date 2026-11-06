@@ -82,7 +82,7 @@ describe("providers", () => {
     expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
     expect(args[args.indexOf("--effort") + 1]).toBe("low");
     expect(args[args.indexOf("--system-prompt") + 1]).toBe("s");
-    expect(JSON.parse(args[args.indexOf("--json-schema") + 1])).toEqual({ type: "object" });
+    expect(args.includes("--json-schema")).toBe(false); // text-JSON mode by default (TC_CLI_JSON_SCHEMA=1 opts in)
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 

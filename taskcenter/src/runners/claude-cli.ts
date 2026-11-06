@@ -11,6 +11,7 @@
  * (sdk-type) MCP servers such as the taskcenter tools cannot be attached to a
  * child process; only stdio/http/sse server configs are forwarded.
  */
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Logger } from "../core/logger.js";
@@ -129,6 +130,7 @@ export function buildCliRunnerArgs(input: RunInput): { args: string[]; allowed: 
   const external = Object.fromEntries(Object.entries(input.mcpServers ?? {}).filter(([, v]) => v && typeof v === "object" && (v as { type?: string }).type !== "sdk" && !("instance" in (v as object))));
   if (Object.keys(external).length) args.push("--mcp-config", JSON.stringify({ mcpServers: external }));
   if (input.resumeSessionId) args.push("--resume", input.resumeSessionId);
+  else args.push("--session-id", randomUUID());
   return { args, allowed, disallowed };
 }
 

@@ -8,6 +8,7 @@
  *  - PostToolUse / PostToolUseFailure hooks that log results,
  *  - structured output via `outputFormat: { type: 'json_schema' }`.
  */
+import { randomUUID } from "node:crypto";
 import type { CanUseTool, HookCallback, HookInput, Options, PostToolUseFailureHookInput, PostToolUseHookInput, PreToolUseHookInput, Query, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "../core/logger.js";
 import { silentLogger } from "../core/logger.js";
@@ -156,7 +157,9 @@ export class ClaudeSdkRunner implements Runner {
       env: agentEnv(),
       stderr: (line: string) => log.debug(`[claude stderr] ${line.trimEnd()}`),
       ...(this.exe ? { pathToClaudeCodeExecutable: this.exe } : {}),
-      ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
+      // Nested Claude Code sessions inherit the outer session id unless one is given explicitly;
+      // a fresh UUID per run keeps transcripts separate and makes resume target the right one.
+      ...(input.resumeSessionId ? { resume: input.resumeSessionId } : { sessionId: randomUUID() }),
     };
 
     const prompt = input.resumeSessionId && input.resumeMessage ? input.resumeMessage : input.prompt;

@@ -5,11 +5,26 @@
  */
 
 /** Environment for child `claude` processes: strips the nested-session markers. */
+/**
+ * Variables that mark "inside another Claude Code session". A nested `claude -p` would
+ * otherwise inherit the outer session id (observed: identical session_id), write to the
+ * outer diagnostics file and try to use the outer messaging socket.
+ */
+export const STRIPPED_ENV = new Set([
+  "CLAUDECODE",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_DIAGNOSTICS_FILE",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+]);
+
 export function cleanClaudeEnv(extra: Record<string, string> = {}): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k === "CLAUDECODE" || k === "CLAUDE_CODE_CHILD_SESSION") continue;
+    if (STRIPPED_ENV.has(k)) continue;
     out[k] = v;
   }
   return { ...out, ...extra };
