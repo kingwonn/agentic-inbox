@@ -18,11 +18,14 @@ export interface Channel {
   /** Optional: start listening for inbound decisions (e.g. Telegram long polling). */
   start?(handler: InboundHandler): Promise<void>;
   stop?(): Promise<void>;
+  /** Optional: called after an approval is decided/expired so the channel can retract buttons. */
+  onDecided?(approval: Approval): Promise<void>;
 }
 
 export interface InboundDecision {
   approvalId: string;
-  decision: Decision;
+  /** One of the four standard decisions, or a custom option value (kind `decision`/`review`, e.g. "accept", "request_changes"). */
+  decision: Decision | (string & {});
   note?: string;
   editedPayload?: Record<string, unknown>;
   decidedBy: string;

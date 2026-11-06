@@ -366,6 +366,8 @@ export interface TriageResult {
   category: Category;
   priority: Priority;
   level: Level;
+  /** Level the LLM proposed before policy clamping (added by brain/classifier). */
+  level_proposed?: Level;
   level_reason: string;
   confidence: number;
   suggested_action: string;
