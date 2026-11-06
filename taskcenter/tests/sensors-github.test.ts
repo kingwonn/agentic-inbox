@@ -33,7 +33,11 @@ class FakeApi implements GithubApi {
     const r = typeof route === "function" ? (route as Route)(new URLSearchParams(qs ?? "")) : { ok: true, status: 200, data: route };
     return r as GithubApiResult<T>;
   }
-  count(prefix: string): number {
+  /** Exact path matches. */
+  count(path: string): number {
+    return this.calls.filter((c) => c === path).length;
+  }
+  countPrefix(prefix: string): number {
     return this.calls.filter((c) => c.startsWith(prefix)).length;
   }
 }
@@ -234,7 +238,8 @@ describe("sensors/github poll (mocked api)", () => {
     expect(api.count(`${BASE}/pulls/1`)).toBe(1);
     expect(api.count(`${BASE}/commits/aaaa1111aaaa1111/check-runs`)).toBe(1);
     expect(api.count(`${BASE}/commits/bbbb2222`)).toBe(1);
-    expect(api.count(`${BASE}/compare/`)).toBe(3);
+    expect(api.countPrefix(`${BASE}/compare/`)).toBe(3);
+    expect(api.count(`${BASE}/pulls/1/reviews`)).toBe(1);
     expect(api.count("notifications")).toBe(1);
     expect(api.calls.length - before).toBeLessThan(before);
     for (const sig of r2.signals) {

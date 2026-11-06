@@ -40,6 +40,9 @@ export function createDryLlm(): LlmProvider {
  */
 export interface DryOutcome {
   status?: "succeeded" | "failed";
+  /** runners/dry.ts compatible keys */
+  fail?: boolean;
+  needsApproval?: string;
   agentStatus?: AgentOutput["status"];
   verified?: boolean;
   cost?: number;
@@ -77,7 +80,19 @@ export function createDryRunner(opts: DryRunnerOptions = {}): Runner {
         return;
       }
       const started = Date.now();
-      const d = ((input.task.context ?? {}).dry ?? {}) as DryOutcome;
+      const raw = ((input.task.context ?? {}).dry ?? {}) as DryOutcome & { status?: string };
+      // Accept runners/dry.ts style scripts too ({fail, needsApproval, status: AgentOutput status}).
+      const d: DryOutcome = { ...raw };
+      if (raw.fail) d.status = "failed";
+      if (raw.status && !["succeeded", "failed"].includes(raw.status)) {
+        d.agentStatus = raw.status as AgentOutput["status"];
+        d.status = "succeeded";
+      }
+      if (raw.needsApproval && !d.tool) {
+        const [tool, ...rest] = raw.needsApproval.split(" ");
+        d.tool = tool;
+        d.toolInput = tool === "Bash" ? { command: rest.join(" ") } : {};
+      }
       const sessionId = input.resumeSessionId ?? `dry-${input.run.id}`;
       const cost = d.cost ?? 0.01;
       yield { type: "started", sessionId, model: input.model };

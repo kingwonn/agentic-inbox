@@ -184,7 +184,7 @@ describe("sensors/imap", () => {
     const release = r1.signals[1];
     expect(release.actor).toBe("noreply@github.com");
     expect(release.body).toContain("Hello there");
-    expect(release.body).toContain("Release v1 is out");
+    expect(release.body).toMatch(/Release v1.*is out/); // mailparser renders links as "text [href]"
     expect(release.body).not.toContain("<b>");
     expect(release.body).toContain("[bulk/notification mail]");
     expect(release.metadata?.flags).toMatchObject({ bulk: true, noreply: true, seen: false });

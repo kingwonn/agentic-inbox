@@ -39,6 +39,12 @@ export class Budget {
     return this.status(now);
   }
 
+  /** Add cost that is not a run (triage, planning, digest). Does not bump the run counter. */
+  addCost(usd: number, now = new Date()): BudgetStatus {
+    if (usd > 0) this.repo.budgets.add(dayKey(now, this.timeZone), usd, 0);
+    return this.status(now);
+  }
+
   canSpend(estimateUsd = 0, now = new Date()): boolean {
     const s = this.status(now);
     if (this.limitUsd <= 0) return true;
