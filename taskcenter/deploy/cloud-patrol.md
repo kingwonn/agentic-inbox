@@ -23,6 +23,13 @@ and the daily digest.
 
 ## 2. Scheduled-task prompt (copy exactly)
 
+Lessons from the first live run (2026-11-06): a scheduled session starts **without the
+repository attached**, so the prompt must first call the `add_repo` tool with
+`access: "push"` (otherwise `git push` to `taskcenter-state` returns 403), and the state
+must be read with `git archive` (a `git --work-tree=... checkout` stages the state files
+into the source branch index). The prompt below already includes both. The live trigger
+`trig_012Q1QZvHoE7FJkwThg4EKcc` (07:37 and 19:37 Asia/Shanghai) uses this text.
+
 ```
 You are the cloud heartbeat of the Agentic Inbox Task Center. Work only inside the
 `taskcenter/` directory of this repository and do not start the daemon.
@@ -33,8 +40,8 @@ You are the cloud heartbeat of the Agentic Inbox Task Center. Work only inside t
    non-critical checks warn (gh login, .env, daemon not running are expected here).
 3. Pull the latest state so cursors and inbox are current:
      git fetch origin taskcenter-state
-     git --work-tree=/tmp/tcstate checkout origin/taskcenter-state -- state 2>/dev/null || true
-     ls /tmp/tcstate/state/*/manifest.json 2>/dev/null | sort | tail -1 | xargs -r -I{} sh -c 'node bin/tc.mjs state import "$(dirname {})"'
+     rm -rf /tmp/tcstate && mkdir -p /tmp/tcstate && git archive origin/taskcenter-state state | tar -x -C /tmp/tcstate
+     latest=$(ls -d /tmp/tcstate/state/*/ 2>/dev/null | sort | tail -1); if [ -n "$latest" ]; then node bin/tc.mjs state import "$latest"; fi
 4. Run the heartbeat, in this order, and stop at the first hard failure:
      node bin/tc.mjs patrol --once --json
      node bin/tc.mjs triage --json
