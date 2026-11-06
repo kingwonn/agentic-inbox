@@ -111,6 +111,18 @@ export async function prepareWorkspace(task: Task, deps: { config: Config; rootD
 
   mkdirSync(path, { recursive: true });
   writeFileSync(resolve(path, "README-task.md"), briefMarkdown(task));
+  // Isolation boundary: the workspace usually lives *inside* a git repository (taskcenter/data/...).
+  // Without its own repository, any `git` command the agent runs would act on the enclosing repo
+  // (observed: an agent created a branch and committed on the orchestrator's checkout). An empty
+  // repository in the workspace makes git resolve to it instead.
+  if (!existsSync(resolve(path, ".git"))) {
+    try {
+      await git(path, ["init", "-q"]);
+      await git(path, ["-c", "user.name=taskcenter", "-c", "user.email=taskcenter@localhost", "commit", "-q", "--allow-empty", "-m", `workspace for ${task.id}`]);
+    } catch (e) {
+      logger.warn(`could not initialise a git boundary in ${path}: ${(e as Error).message}`);
+    }
+  }
   return {
     path,
     kind: "dir",

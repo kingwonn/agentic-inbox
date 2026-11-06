@@ -413,6 +413,12 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
         return;
       }
       if (task.status !== "running") {
+        if (task.status === "waiting_human" || result.status === "waiting_human") {
+          // The approval service already parked the task (the agent called request_approval or the
+          // gate created an approval); keep the run resumable instead of closing it as failed.
+          transitionRun(repo, bus, run.id, "waiting_human", runPatch as Record<string, unknown>, true);
+          return;
+        }
         // Someone moved the task meanwhile (cancel); just close the run.
         transitionRun(repo, bus, run.id, result.status === "succeeded" ? "succeeded" : "failed", runPatch as Record<string, unknown>, true);
         return;
