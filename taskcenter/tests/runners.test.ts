@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import { createRunner, defaultRunnerName, selectRunner } from "../src/runners/re
 import { AGENT_OUTPUT_JSON_SCHEMA, extractAgentOutputFromText, parseAgentOutput } from "../src/runners/result.js";
 import { createTaskCenterMcp } from "../src/runners/taskcenter-tools.js";
 import type { RunEvent, RunInput, RunResult } from "../src/runners/types.js";
-import { AsyncQueue, truncateOutput, agentEnv } from "../src/runners/util.js";
+import { AsyncQueue, truncateOutput, agentEnv, isSessionNotFoundError } from "../src/runners/util.js";
 import { cfg, FakeApprovals, mem, policy, task } from "./brain-helpers.js";
 
 const tmpDirs: string[] = [];
@@ -198,6 +198,39 @@ describe("tool gate", () => {
     expect((await l5.gate({ tool: "Bash", input: { command: "git push -u origin tc/abc" } })).action).toBe("allow");
     expect(l5.approvals.requested.length).toBe(0);
   });
+
+  it("applies the decision a resume run carries to exactly the decided call instead of asking again", async () => {
+    const decided = (decision: string, extra: Record<string, unknown> = {}) =>
+      setup(4, { context: { pending_resume: { resume: { approvalId: "apr_prev", decision, action: { tool: "Bash", input: { command: "git push origin main" } }, ...extra } } } });
+    const push = { tool: "Bash", input: { command: "git push origin main", description: "Push the branch" } };
+
+    const a = decided("approve");
+    a.approvals.mode = "pending";
+    const ok = await a.gate(push);
+    expect(ok.action).toBe("allow");
+    expect(ok.reason).toContain("approved earlier by the human (approval apr_prev");
+    expect(a.approvals.requested.length).toBe(0);
+    expect(a.repo.events.list({ type: "approval_decided" })[0].payload).toMatchObject({ approval_id: "apr_prev", source: "gate_resume", action: "allow" });
+    // any other call still goes through a new approval
+    const other = await a.gate({ tool: "Bash", input: { command: "git push --force origin main" } });
+    expect(other.action === "deny" && other.pendingApprovalId).toBe(a.approvals.requested[0].id);
+
+    const e = decided("edit", { editedPayload: { tool: "Bash", input: { command: "git push origin tc/safe" } } });
+    const edited = await e.gate(push);
+    expect(edited.action === "allow" && edited.input).toEqual({ command: "git push origin tc/safe" });
+    expect((await e.gate({ tool: "Bash", input: { command: "git push origin tc/safe" } })).action).toBe("allow");
+    expect(e.approvals.requested.length).toBe(0);
+
+    const r = decided("reject", { note: "not today" });
+    const no = await r.gate(push);
+    expect(no.action).toBe("deny");
+    expect(no.reason).toContain("The human rejected this action (approval apr_prev): not today");
+    expect(r.approvals.requested.length).toBe(0);
+
+    // policy deny still wins over an earlier approval
+    const d = setup(4, { context: { pending_resume: { resume: { approvalId: "apr_prev", decision: "approve", action: { tool: "Bash", input: { command: "mkfs.ext4 /dev/sda" } } } } } });
+    expect((await d.gate({ tool: "Bash", input: { command: "mkfs.ext4 /dev/sda" } })).action).toBe("deny");
+  });
 });
 
 describe("taskcenter MCP tools", () => {
@@ -297,6 +330,17 @@ describe("dry runner", () => {
     expect(wr.result.structured?.status).toBe("blocked");
     expect(existsSync(join(w.workspace, "x.txt"))).toBe(false);
   });
+
+  it("reports a missing session on resume runs only", async () => {
+    const s = setup(3, { context: { dry: { sessionMissing: true } } });
+    const resumed = await collect(new DryRunner().run(runInput(s, { resumeSessionId: "sess-gone", resumeMessage: "go on" })));
+    expect(resumed.result).toMatchObject({ status: "failed", sessionNotFound: true });
+    expect(resumed.result.sessionId).toBeUndefined();
+    expect(resumed.events.some((e) => e.type === "started" || e.type === "error")).toBe(false);
+    const fresh = await collect(new DryRunner().run(runInput(s)));
+    expect(fresh.result.status).toBe("succeeded");
+    expect(fresh.result.sessionNotFound).toBeUndefined();
+  });
 });
 
 describe("registry", () => {
@@ -357,6 +401,62 @@ describe("codex runner args", () => {
     const l4 = buildCodexArgs(runInput(setup(4), { model: "haiku" }), { schema: "/s.json", lastMessage: "/l.md" });
     expect(l4[l4.indexOf("--sandbox") + 1]).toBe("workspace-write");
     expect(l4).not.toContain("-m");
+    // `resume` is exec's subcommand: options first, then `resume <id> -` (prompt on stdin)
+    const resumed = buildCodexArgs(runInput(setup(4), { resumeSessionId: "sess-1" }), { schema: "/s.json", lastMessage: "/l.md" });
+    expect(resumed[0]).toBe("exec");
+    expect(resumed.slice(-3)).toEqual(["resume", "sess-1", "-"]);
+  });
+});
+
+/**
+ * A fake agent CLI that replays the output observed for a resume of an unknown session
+ * (claude 2.1.319: error result + stderr line, exit 1; codex 0.167: stderr only, exit 1).
+ */
+function fakeBin(name: string, stdout: string, stderr: string): { bin: string; args: () => string } {
+  const dir = tmp();
+  const bin = join(dir, name);
+  const argsFile = join(dir, "args.txt");
+  writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nprintf '%s' '${stdout}'\necho '${stderr}' >&2\nexit 1\n`);
+  chmodSync(bin, 0o755);
+  return { bin, args: () => readFileSync(argsFile, "utf8") };
+}
+
+const CLAUDE_NOT_FOUND = '{"type":"result","subtype":"error_during_execution","duration_ms":0,"is_error":true,"num_turns":0,"stop_reason":null,"session_id":"sess-1","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"errors":["No conversation found with session ID: sess-1"]}\n';
+
+describe("resume of a session that does not exist here", () => {
+  it("recognises the Claude and Codex not-found errors only", () => {
+    expect(isSessionNotFoundError("error_during_execution: No conversation found with session ID: 1b4c1f0e")).toBe(true);
+    expect(isSessionNotFoundError(undefined, "Error: thread/resume: thread/resume failed: no rollout found for thread id 1b4c (code -32600)")).toBe(true);
+    expect(isSessionNotFoundError("error_max_turns", "file not found", undefined)).toBe(false);
+  });
+
+  it("claude-cli: reports sessionNotFound instead of an error, and only for resume runs", async () => {
+    const fake = fakeBin("claude", CLAUDE_NOT_FOUND, "No conversation found with session ID: sess-1");
+    const s = setup(3);
+    const r = await collect(new ClaudeCliRunner({ bin: fake.bin }).run(runInput(s, { resumeSessionId: "sess-1", resumeMessage: "go on" })));
+    expect(fake.args()).toContain("--resume\nsess-1");
+    expect(r.result).toMatchObject({ status: "failed", sessionNotFound: true });
+    expect(r.result.sessionId).toBeUndefined();
+    expect(r.events.some((e) => e.type === "error")).toBe(false);
+    expect(r.events.some((e) => e.type === "progress")).toBe(true);
+    const plain = await collect(new ClaudeCliRunner({ bin: fake.bin }).run(runInput(s)));
+    expect(plain.result.sessionNotFound).toBeUndefined();
+    expect(plain.events.some((e) => e.type === "error")).toBe(true);
+  });
+
+  it("claude-sdk: reports sessionNotFound from the SDK's error result", async () => {
+    const fake = fakeBin("claude", CLAUDE_NOT_FOUND, "No conversation found with session ID: sess-1");
+    const r = await collect(new ClaudeSdkRunner({ pathToClaudeCodeExecutable: fake.bin }).run(runInput(setup(3), { resumeSessionId: "sess-1", resumeMessage: "go on" })));
+    expect(fake.args()).toContain("--resume=sess-1");
+    expect(r.result).toMatchObject({ status: "failed", sessionNotFound: true });
+    expect(r.events.some((e) => e.type === "error")).toBe(false);
+  });
+
+  it("codex: reports sessionNotFound for `no rollout found`", async () => {
+    const fake = fakeBin("codex", "", "Error: thread/resume: thread/resume failed: no rollout found for thread id sess-1 (code -32600)");
+    const r = await collect(new CodexRunner({ bin: fake.bin }).run(runInput(setup(3), { resumeSessionId: "sess-1", resumeMessage: "go on" })));
+    expect(fake.args().trim().split("\n").slice(-3)).toEqual(["resume", "sess-1", "-"]);
+    expect(r.result).toMatchObject({ status: "failed", sessionNotFound: true });
   });
 });
 

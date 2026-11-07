@@ -5,6 +5,7 @@
  *   { status: "partial" | "blocked" | "needs_human" | "done" }
  *   { summary, artifacts, learned, followUps, writeFile: "name.txt" }
  *   { delayMs: 50 }
+ *   { sessionMissing: true }            → a resume run reports sessionNotFound (session parked elsewhere)
  */
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -22,6 +23,7 @@ interface DryScript {
   followUps?: string[];
   writeFile?: string;
   delayMs?: number;
+  sessionMissing?: boolean;
 }
 
 export class DryRunner implements Runner {
@@ -34,6 +36,12 @@ export class DryRunner implements Runner {
   async *run(input: RunInput): AsyncIterable<RunEvent> {
     const started = Date.now();
     const script = ((input.task.context?.dry as DryScript | undefined) ?? {}) as DryScript;
+    if (script.sessionMissing && input.resumeSessionId) {
+      const error = `No conversation found with session ID: ${input.resumeSessionId}`;
+      yield { type: "progress", message: `session ${input.resumeSessionId} not found on this machine` };
+      yield { type: "result", result: { ...base("", started, { status: "failed", text: "", error, sessionNotFound: true }), sessionId: undefined, inputTokens: 0, outputTokens: 0, numTurns: 0 } };
+      return;
+    }
     const sessionId = `dry-${input.run.id}`;
     yield { type: "started", sessionId, model: input.model };
     if (script.delayMs) await new Promise((r) => setTimeout(r, script.delayMs));

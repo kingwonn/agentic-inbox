@@ -15,7 +15,7 @@ import { silentLogger } from "../core/logger.js";
 import type { AgentOutput } from "../core/types.js";
 import { extractAgentOutputFromText, parseAgentOutput } from "./result.js";
 import type { RunEvent, RunInput, Runner, RunResult, ToolGateResult } from "./types.js";
-import { AsyncQueue, UNGATED_TOOLS, agentEnv, errorMessage, truncateOutput } from "./util.js";
+import { AsyncQueue, UNGATED_TOOLS, agentEnv, errorMessage, isSessionNotFoundError, truncateOutput } from "./util.js";
 
 export interface ClaudeSdkRunnerOptions {
   logger?: Logger;
@@ -70,6 +70,8 @@ export class ClaudeSdkRunner implements Runner {
 
     let pendingApprovalId: string | undefined;
     let sessionId: string | undefined = input.resumeSessionId;
+    let initSeen = false;
+    let stderrTail = "";
     const seenToolUse = new Set<string>();
 
     const runGate = async (tool: string, rawInput: unknown, toolUseId?: string): Promise<ToolGateResult> => {
@@ -155,7 +157,10 @@ export class ClaudeSdkRunner implements Runner {
       outputFormat: { type: "json_schema", schema: input.outputSchema },
       abortController: ac,
       env: agentEnv(),
-      stderr: (line: string) => log.debug(`[claude stderr] ${line.trimEnd()}`),
+      stderr: (line: string) => {
+        stderrTail = (stderrTail + line).slice(-4000);
+        log.debug(`[claude stderr] ${line.trimEnd()}`);
+      },
       ...(this.exe ? { pathToClaudeCodeExecutable: this.exe } : {}),
       // Nested Claude Code sessions inherit the outer session id unless one is given explicitly;
       // a fresh UUID per run keeps transcripts separate and makes resume target the right one.
@@ -173,6 +178,7 @@ export class ClaudeSdkRunner implements Runner {
         query = sdk.query({ prompt, options });
         for await (const m of query as AsyncIterable<SDKMessage>) {
           if (m.type === "system" && m.subtype === "init") {
+            initSeen = true;
             sessionId = m.session_id;
             emit({ type: "started", sessionId, model: m.model });
             continue;
@@ -220,8 +226,13 @@ export class ClaudeSdkRunner implements Runner {
     if (!sessionId && !last && thrown) {
       emit({ type: "error", error: errorMessage(thrown) });
     }
-    const result = this.mapResult({ last, thrown, sessionId, started, lastAssistantText, pendingApprovalId, aborted: ac.signal.aborted, timedOut: ac.signal.aborted && !input.signal.aborted });
-    if (result.status === "failed" && result.error) yield { type: "error", error: result.error };
+    let result = this.mapResult({ last, thrown, sessionId, started, lastAssistantText, pendingApprovalId, aborted: ac.signal.aborted, timedOut: ac.signal.aborted && !input.signal.aborted });
+    // Resuming a session this machine never saw: the CLI answers with an error result before any
+    // init message. Report it so the executor can fall back instead of counting a failed attempt.
+    if (input.resumeSessionId && result.status === "failed" && !initSeen && isSessionNotFoundError(result.error, thrown ? errorMessage(thrown) : undefined, stderrTail)) {
+      result = { ...result, sessionId: undefined, sessionNotFound: true };
+      yield { type: "progress", message: `session ${input.resumeSessionId} not found on this machine` };
+    } else if (result.status === "failed" && result.error) yield { type: "error", error: result.error };
     yield { type: "result", result };
   }
 

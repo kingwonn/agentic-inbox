@@ -12,7 +12,20 @@ export interface ExecutePromptOpts {
   level: Level;
   workspace: string;
   locale: string;
-  resume?: { approvalId: string; decision: string; note?: string; editedPayload?: Record<string, unknown> };
+  resume?: {
+    approvalId: string;
+    decision: string;
+    note?: string;
+    editedPayload?: Record<string, unknown>;
+    kind?: string;
+    /** For action approvals: the tool call the human decided on. */
+    action?: { tool: string; input: Record<string, unknown> };
+  };
+  /**
+   * With `resume`: the parked agent session cannot be resumed on this machine (it ran elsewhere), so
+   * the prompt is the full task brief plus the human's decision instead of a short resume message.
+   */
+  freshSession?: boolean;
 }
 
 const LEVEL_RULES: Record<Level, string> = {
@@ -145,8 +158,61 @@ export function buildResumePrompt(task: Task, opts: ExecutePromptOpts): string {
   return lines.join("\n");
 }
 
+/** The approved/edited input of an action approval (an edited payload's `input`, or the whole edited object without a `tool` key). */
+function decidedInput(r: NonNullable<ExecutePromptOpts["resume"]>): Record<string, unknown> | undefined {
+  const e = r.editedPayload;
+  if (e && typeof e.input === "object" && e.input) return e.input as Record<string, unknown>;
+  if (e && !("tool" in e) && Object.keys(e).length) return e;
+  return r.action?.input;
+}
+
+/**
+ * Appended to the full task brief when the parked session is gone (it ran on another machine):
+ * tells the agent what was decided and how to act on it without asking for the same approval again.
+ */
+export function buildFreshSessionNote(opts: ExecutePromptOpts): string {
+  const r = opts.resume!;
+  const lines = [
+    "## Resuming after a human decision (new session)",
+    "This task was started earlier in an agent session that ran on another machine. That session and its workspace (files, commits, branches it created) are not available here; you are starting from the workspace above. If the earlier results are reachable (for example the task's tc/ branch exists here or on the remote), reuse them instead of redoing the work.",
+    `Before it stopped, the earlier run asked for a human decision (approval ${r.approvalId}${r.kind ? `, ${r.kind}` : ""}). The human decided: **${r.decision}**.`,
+  ];
+  if (r.note) lines.push(`Note from the human: ${r.note}`);
+  if (r.action) {
+    const input = decidedInput(r) ?? r.action.input;
+    lines.push(`The action decided on (${input !== r.action.input ? "as edited by the human" : "as requested"}): tool \`${r.action.tool}\` with input:\n\`\`\`json\n${truncateChars(JSON.stringify(input, null, 1), 3000)}\n\`\`\``);
+  } else if (r.editedPayload) {
+    lines.push(`Edited payload:\n\`\`\`json\n${truncateChars(JSON.stringify(r.editedPayload, null, 1), 3000)}\n\`\`\``);
+  }
+  switch (r.decision) {
+    case "approve":
+    case "edit":
+      lines.push(
+        r.action
+          ? "Act on this decision: do only the work needed to reach that action, then perform it with exactly this tool and input (it is recognised as already approved, so do not ask again), and finish the remaining steps."
+          : "Act on this decision: continue the task accordingly and finish the remaining steps.",
+      );
+      break;
+    case "reject":
+      lines.push(
+        "The human said NO. Do not redo the earlier work and do not perform the rejected action. Unless the note asks for a specific alternative (then do only that), finish right away with status blocked or partial, a summary that records the decision, and follow_ups for what remains.",
+      );
+      break;
+    case "request_changes":
+      lines.push("The human reviewed the earlier deliverable and requested changes. Produce the deliverable again, applying the requested changes.");
+      break;
+    case "respond":
+      lines.push("Use the human's answer to carry out the task.");
+      break;
+    default:
+      lines.push("Carry out the task following the human's decision.");
+  }
+  lines.push("End with the structured output as usual.");
+  return lines.join("\n");
+}
+
 export function buildExecutionPrompt(task: Task, context: ContextSnapshot, opts: ExecutePromptOpts): { prompt: string; systemPromptAppend: string } {
   const systemPromptAppend = buildSystemPromptAppend(context, opts);
-  const prompt = opts.resume ? buildResumePrompt(task, opts) : buildPromptBody(task, opts);
+  const prompt = !opts.resume ? buildPromptBody(task, opts) : opts.freshSession ? `${buildPromptBody(task, opts)}\n${buildFreshSessionNote(opts)}` : buildResumePrompt(task, opts);
   return { prompt, systemPromptAppend };
 }

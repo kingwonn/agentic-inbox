@@ -37,7 +37,8 @@ export function createDryLlm(): LlmProvider {
  * Outcome hints read from task.context.dry so demos/tests can script behaviour:
  *   { status: 'failed' | 'succeeded', agentStatus: 'done'|'partial'|'blocked'|'needs_human',
  *     verified: boolean, cost: number, delayMs: number, tool: 'Bash', toolInput: {...},
- *     summary, artifacts, learned, question, options, error }
+ *     summary, artifacts, learned, question, options, error,
+ *     sessionMissing: true → a resume run reports sessionNotFound (session parked on another machine) }
  */
 export interface DryOutcome {
   status?: "succeeded" | "failed";
@@ -57,6 +58,7 @@ export interface DryOutcome {
   options?: string[];
   error?: string;
   followUps?: string[];
+  sessionMissing?: boolean;
 }
 
 export interface DryRunnerOptions {
@@ -93,6 +95,11 @@ export function createDryRunner(opts: DryRunnerOptions = {}): Runner {
         const [tool, ...rest] = raw.needsApproval.split(" ");
         d.tool = tool;
         d.toolInput = tool === "Bash" ? { command: rest.join(" ") } : {};
+      }
+      if (d.sessionMissing && input.resumeSessionId) {
+        yield { type: "progress", message: `session ${input.resumeSessionId} not found on this machine` };
+        yield { type: "result", result: { ...failed(`No conversation found with session ID: ${input.resumeSessionId}`), sessionNotFound: true } };
+        return;
       }
       const sessionId = input.resumeSessionId ?? `dry-${input.run.id}`;
       const cost = d.cost ?? 0.01;

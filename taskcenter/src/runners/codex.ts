@@ -19,7 +19,7 @@ import type { Logger } from "../core/logger.js";
 import { silentLogger } from "../core/logger.js";
 import { extractAgentOutputFromText, parseAgentOutput } from "./result.js";
 import type { RunEvent, RunInput, Runner, RunResult } from "./types.js";
-import { AsyncQueue, agentEnv, errorMessage, truncateOutput } from "./util.js";
+import { AsyncQueue, agentEnv, errorMessage, isSessionNotFoundError, truncateOutput } from "./util.js";
 
 export interface CodexRunnerOptions {
   bin?: string;
@@ -30,9 +30,11 @@ export function buildCodexArgs(input: RunInput, paths: { schema: string; lastMes
   const args = ["exec", "--json", "-C", input.workspace, "--sandbox", input.level >= 3 ? "workspace-write" : "read-only", "--output-schema", paths.schema, "--output-last-message", paths.lastMessage, "--skip-git-repo-check"];
   if (input.model && !/^(haiku|sonnet|opus|fable)$/.test(input.model)) args.push("-m", input.model);
   if (input.effort) args.push("-c", `model_reasoning_effort="${input.effort === "xhigh" || input.effort === "max" ? "high" : input.effort}"`);
-  if (input.resumeSessionId) args.unshift("resume", input.resumeSessionId);
   const extra = process.env.TC_CODEX_ARGS;
   if (extra) args.push(...extra.split(/\s+/).filter(Boolean));
+  // `resume` is a subcommand of `exec`: exec's options go before it, "-" reads the prompt from stdin
+  // (`codex exec [OPTIONS] resume <id> -`; `codex resume <id> exec …` is the TUI and rejects --json).
+  if (input.resumeSessionId) args.push("resume", input.resumeSessionId, "-");
   return args;
 }
 
@@ -89,6 +91,7 @@ export class CodexRunner implements Runner {
       return;
     }
     let sessionId: string | undefined = input.resumeSessionId;
+    let threadStarted = false;
     let lastText = "";
     let failure: string | undefined;
     let usage = { input: 0, output: 0 };
@@ -133,6 +136,7 @@ export class CodexRunner implements Runner {
       }
       const t = ev.type ?? "";
       if (t === "thread.started") {
+        threadStarted = true;
         sessionId = ev.thread_id ?? sessionId;
         q.push({ type: "started", sessionId, model: input.model });
       } else if (t === "turn.started") {
@@ -194,6 +198,11 @@ export class CodexRunner implements Runner {
     else if (failure || code !== 0) result = { ...base, status: "failed", text: finalText, structured, error: failure ?? `codex exited ${code}: ${stderr.trim().slice(-500)}` };
     else if (structured?.status === "needs_human") result = { ...base, status: "waiting_human", text: finalText, structured };
     else result = { ...base, status: "succeeded", text: finalText, structured };
+    // `exec resume <id>` for a thread this machine never saw: "no rollout found …" on stderr, exit 1.
+    if (input.resumeSessionId && result.status === "failed" && !threadStarted && !killedBy && isSessionNotFoundError(failure, stderr)) {
+      result = { ...result, sessionId: undefined, sessionNotFound: true };
+      yield { type: "progress", message: `session ${input.resumeSessionId} not found on this machine` };
+    }
     log.debug(`codex run finished: ${result.status}`);
     yield { type: "result", result };
   }

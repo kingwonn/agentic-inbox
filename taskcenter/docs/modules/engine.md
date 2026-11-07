@@ -54,7 +54,22 @@ editedPayload, decidedAt} }`. At checkout the executor consumes the marker (move
 `context.last_resume`), sets `run.resume_of` to the parked run, copies its `session_id`
 and passes `resume` to `buildExecutionPrompt`; `RunInput.resumeSessionId/resumeMessage`
 are set so the runner continues the agent session. Review `request_changes` works the
-same way (plus `context.review_notes[]`).
+same way (plus `context.review_notes[]`). `resume` also carries the approval `kind` and, for
+action approvals, the decided tool call (`action: {tool, input}` from `approval.payload`); the
+gate applies that decision when the agent repeats exactly that call (see runners.md, "Gate").
+
+**Resume when the session is not on this machine.** A parked run's session may live elsewhere
+(e.g. a cloud session whose state was brought in with `tc state import`). The runner then reports
+`RunResult.sessionNotFound` (nothing ran). The executor falls back **once, inside the same run**:
+it records a `system` event (`payload.resume_fallback: "fresh_session"`, `lost_session_id`,
+`approval_id`, `decision`, `runner`), clears `run.session_id`, rebuilds the prompt with
+`buildExecutionPrompt(..., { resume, freshSession: true })` — the full task brief plus a note that the
+earlier session and its workspace are gone, what the human decided (note, decided/edited tool call)
+and how to act on it (approve/edit: redo only what is needed and perform exactly that call;
+reject: do not redo the work, finish blocked/partial) — and runs a fresh session (no
+`resumeSessionId`, new taskcenter MCP server instance). The fallback is not an attempt; only the
+fresh session's own outcome counts (a failure there goes through the normal retry path). A resume
+whose parked run never recorded a session id starts the same way (event with `lost_session_id: null`).
 
 **Run.** `prepareWorkspace` (worktree branch recorded in `context.branch`) →
 `loadContext` → `buildExecutionPrompt` → model = `task.model ?? (level ≥ 5 || plan.notes includes "hard" ? models.heavy : models.execute)`

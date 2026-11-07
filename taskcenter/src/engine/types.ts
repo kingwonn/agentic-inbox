@@ -64,13 +64,24 @@ export interface ResumeInfo {
   decision: string;
   note?: string;
   editedPayload?: Record<string, unknown>;
+  /** Approval kind (action, question, decision, review). */
+  kind?: string;
+  /** For `action` approvals: the gated tool call the human decided on (approval.payload). */
+  action?: { tool: string; input: Record<string, unknown> };
 }
 
 /** Mirrors brain/prompts/execute.ts buildExecutionPrompt. */
 export type BuildPromptFn = (
   task: Task,
   context: ContextSnapshotLike,
-  opts: { level: Level; workspace: string; locale: string; resume?: ResumeInfo },
+  opts: {
+    level: Level;
+    workspace: string;
+    locale: string;
+    resume?: ResumeInfo;
+    /** With `resume`: the parked session cannot be resumed here → full task prompt plus the decision. */
+    freshSession?: boolean;
+  },
 ) => { prompt: string; systemPromptAppend: string };
 
 export type RecordLearnedFn = (learned: string[], source: string) => number;
@@ -103,7 +114,6 @@ export type SelectRunnerFn = (override?: string | null) => Promise<Runner>;
 
 /** Stored in task.context.pending_resume while a decided approval waits for its resume run. */
 export interface PendingResume extends ResumeInfo {
-  kind?: string;
   runId?: string | null;
   sessionId?: string | null;
   decidedAt?: string | null;

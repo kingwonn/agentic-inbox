@@ -33,6 +33,12 @@ export interface RunResult {
   error?: string;
   /** Set when the agent stopped because an approval is pending. */
   pendingApprovalId?: string;
+  /**
+   * Resume runs only: the session in `RunInput.resumeSessionId` does not exist on this machine
+   * (e.g. it was parked on another machine and only the state was imported), so nothing ran.
+   * `status` is `failed`; the executor falls back once to a fresh session instead of retrying.
+   */
+  sessionNotFound?: boolean;
 }
 
 /**
@@ -69,7 +75,10 @@ export interface RunInput {
   disallowedTools: string[];
   /** JSON schema the agent must satisfy in its final structured output (AgentOutput). */
   outputSchema: Record<string, unknown>;
-  /** Resume an earlier session (after approval) with this message. */
+  /**
+   * Resume an earlier session (after approval) with this message. When the session does not exist
+   * here the runner must not start a fresh one itself: it reports `RunResult.sessionNotFound`.
+   */
   resumeSessionId?: string;
   resumeMessage?: string;
   /** Extra MCP servers (e.g. the in-process taskcenter tools) keyed by server name. */

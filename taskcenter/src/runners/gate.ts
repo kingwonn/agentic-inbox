@@ -43,6 +43,39 @@ function describeCall(tool: string, input: Record<string, unknown>): { what: str
   return { what: `${tool} ${truncateChars(JSON.stringify(input), 500)}`, why: "" };
 }
 
+/** A decision the human already made on a gated tool call, carried into the resume run. */
+interface ResumedAction {
+  approvalId: string;
+  decision: string;
+  note?: string;
+  tool: string;
+  input: Record<string, unknown>;
+  editedInput?: Record<string, unknown>;
+}
+
+const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+
+/**
+ * Read the decision this run resumes after from task.context.pending_resume (`{resume}` as set by the
+ * executor; flat form accepted). Only action approvals with the decided tool call (`resume.action`) count.
+ */
+export function resumedActionOf(task: Task): ResumedAction | undefined {
+  const marker = obj(task.context?.pending_resume);
+  const r = obj(marker?.resume) ?? marker;
+  const action = obj(r?.action);
+  if (!r || typeof r.approvalId !== "string" || !action || typeof action.tool !== "string") return undefined;
+  const edited = obj(r.editedPayload);
+  const editedInput = obj(edited?.input) ?? (edited && !("tool" in edited) && Object.keys(edited).length ? edited : undefined);
+  return { approvalId: r.approvalId, decision: String(r.decision ?? ""), note: typeof r.note === "string" ? r.note : undefined, tool: action.tool, input: obj(action.input) ?? {}, editedInput };
+}
+
+/** Canonical JSON of a tool input for matching: sorted keys, the cosmetic Bash `description` ignored. */
+function inputKey(input: Record<string, unknown>): string {
+  const { description: _d, ...rest } = input;
+  const canon = (v: unknown): unknown => (Array.isArray(v) ? v.map(canon) : obj(v) ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])])) : v);
+  return JSON.stringify(canon(rest));
+}
+
 export function pendingMessage(id: string): string {
   return `Approval ${id} is pending human review. Stop working on this step, record what you have done so far, and finish with status needs_human.`;
 }
@@ -51,6 +84,30 @@ export function createToolGate(opts: ToolGateOpts): ToolGateWithState {
   const { policy, level, task, run, workspace, approvals, bus, waitMs, expiresHours, signal, logger } = opts;
   const cache = new Map<string, ToolGateResult>();
   const inflight = new Map<string, Promise<ToolGateResult>>();
+  const resumed = resumedActionOf(task);
+
+  /**
+   * On a resume run the human has already decided on one tool call; when the agent makes exactly that
+   * call again (original or edited input) apply the decision instead of opening a second approval.
+   * Needed whenever the agent repeats the call — always so after a fresh-session fallback.
+   */
+  const decidedEarlier = (tool: string, input: Record<string, unknown>): ToolGateResult | undefined => {
+    if (!resumed || tool !== resumed.tool) return undefined;
+    const key = inputKey(input);
+    if (key !== inputKey(resumed.input) && !(resumed.editedInput && key === inputKey(resumed.editedInput))) return undefined;
+    const note = resumed.note ? `: ${resumed.note}` : "";
+    switch (resumed.decision) {
+      case "approve":
+      case "edit":
+        return { action: "allow", input: resumed.editedInput ?? input, reason: `approved earlier by the human (approval ${resumed.approvalId}${resumed.editedInput ? ", edited" : ""})` };
+      case "reject":
+        return { action: "deny", reason: `The human rejected this action (approval ${resumed.approvalId})${note}. Do not retry it; continue with an alternative or wrap up.` };
+      case "respond":
+        return { action: "deny", reason: `The human responded instead of approving (approval ${resumed.approvalId})${note || ": (no text)"}. Follow their response; do not retry this exact action unless they asked for it.` };
+      default:
+        return undefined;
+    }
+  };
 
   const decideFromApproval = (a: Approval, tool: string, input: Record<string, unknown>): ToolGateResult => {
     const note = a.decision_note ? ` Note: ${a.decision_note}` : "";
@@ -81,6 +138,12 @@ export function createToolGate(opts: ToolGateOpts): ToolGateWithState {
     if (decision.action === "deny") {
       logger.info(`gate deny ${tool}: ${decision.reason}`, { task_id: task.id, run_id: run.id });
       return { action: "deny", reason: `Denied by policy: ${decision.reason}` };
+    }
+    const earlier = decidedEarlier(tool, input);
+    if (earlier) {
+      bus.record({ type: "approval_decided", level: "debug", task_id: task.id, run_id: run.id, message: `gate: applied earlier decision on approval ${resumed!.approvalId} (${tool}: ${earlier.action})`, payload: { approval_id: resumed!.approvalId, tool, decision: resumed!.decision, action: earlier.action, source: "gate_resume" } });
+      logger.info(`gate ${tool}: ${earlier.action} (decided earlier, approval ${resumed!.approvalId})`, { task_id: task.id, run_id: run.id });
+      return earlier;
     }
     // approve → Outbox
     const { what, why } = describeCall(tool, input);

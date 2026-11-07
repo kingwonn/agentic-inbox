@@ -61,6 +61,18 @@ export function agentEnv(extra: Record<string, string> = {}): Record<string, str
 /** Tools the gate never sees: the SDK's own plumbing and harmless bookkeeping. */
 export const UNGATED_TOOLS = new Set(["StructuredOutput", "TodoWrite", "ToolSearch", "BashOutput", "KillShell", "ListMcpResourcesTool", "ReadMcpResourceTool"]);
 
+/**
+ * Error text of a resume whose session does not exist on this machine. Verified outputs:
+ * - claude CLI / Agent SDK 2.1.x: result `error_during_execution` with
+ *   `errors: ["No conversation found with session ID: <id>"]` (same line on stderr, exit 1);
+ * - codex exec 0.167: stderr `thread/resume failed: no rollout found for thread id <id>` (exit 1).
+ */
+const SESSION_NOT_FOUND_RE = /no conversation found with session id|no rollout found for (?:thread|session|conversation) id/i;
+
+export function isSessionNotFoundError(...texts: Array<string | undefined | null>): boolean {
+  return texts.some((t) => !!t && SESSION_NOT_FOUND_RE.test(t));
+}
+
 export function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   return typeof e === "string" ? e : JSON.stringify(e);

@@ -8,17 +8,17 @@ the task/run state machine and handles retries/resume; runners never touch task 
 
 | File | Exports | Role |
 |---|---|---|
-| `types.ts` | `Runner`, `RunInput`, `RunEvent`, `RunResult`, `ToolGate`, `ToolGateResult` | Contract (unchanged). |
+| `types.ts` | `Runner`, `RunInput`, `RunEvent`, `RunResult`, `ToolGate`, `ToolGateResult` | Contract. `RunResult.sessionNotFound` (additive): see "Resume of a session that is not here". |
 | `result.ts` | `AGENT_OUTPUT_JSON_SCHEMA`, `AgentOutputSchema`, `parseAgentOutput`, `extractAgentOutputFromText` | Draft-07 schema for `AgentOutput` (`required: summary, status, verification`; everything else optional), lenient zod parser with defaults, and text extraction (last ```json block or last `{…}`, plus `output`/`result` wrappers). |
 | `workspace.ts` | `prepareWorkspace`, `isCodeTask`, `branchNameFor` | Code tasks (`category: code` or labels `repo`/`code`) get a git worktree at `<workspace_root>/<task.id>` on branch `tc/<task.id>` created from `task.context.base_ref` → `origin/HEAD` → current `HEAD` of `config.executor.repo_root`; an existing worktree or branch is reused. Other tasks get a plain dir. Both get `README-task.md` with the brief. `cleanup()` runs `git worktree remove --force` + `prune` and **keeps the branch**; plain dirs are kept (they hold deliverables). Falls back to a plain dir when `repo_root` is not a git repo. Tested live against this repository. |
-| `gate.ts` | `createToolGate`, `pendingMessage`, `ToolGateWithState` | See "Gate". |
+| `gate.ts` | `createToolGate`, `pendingMessage`, `resumedActionOf`, `ToolGateWithState` | See "Gate". |
 | `taskcenter-tools.ts` | `createTaskCenterMcp`, `TASKCENTER_MCP_NAME` | In-process MCP server (`createSdkMcpServer` + `tool()` with zod shapes). See "Task Center tools". |
 | `claude-sdk.ts` | `ClaudeSdkRunner`, `createClaudeSdkRunner` | Primary runner (Claude Agent SDK `query()`). |
 | `claude-cli.ts` | `ClaudeCliRunner`, `buildCliRunnerArgs`, `CLI_SAFE_BASH`, `CLI_DENY_BASH` | Fallback runner (raw `claude -p` NDJSON). |
 | `codex.ts` | `CodexRunner`, `buildCodexArgs` | `codex exec --json` best effort; unavailable unless `codex` is on PATH. |
 | `dry.ts` | `DryRunner` | Deterministic runner for tests / `provider: dry`. |
 | `registry.ts` | `createRunner`, `selectRunner`, `defaultRunnerName`, `RUNNER_NAMES` | Provider→runner mapping and availability fallback `claude-sdk → claude-cli → dry` (with a warning). |
-| `util.ts` | `AsyncQueue`, `truncateOutput`, `agentEnv`, `UNGATED_TOOLS`, `errorMessage` | Shared plumbing. |
+| `util.ts` | `AsyncQueue`, `truncateOutput`, `agentEnv`, `UNGATED_TOOLS`, `errorMessage`, `isSessionNotFoundError` | Shared plumbing. |
 
 ## Gate (`createToolGate`)
 
@@ -40,6 +40,15 @@ Every tool call goes through `policy.evaluateToolUse({level, toolName, input, wo
     as `waiting_human`.
 - Decisions are cached per `(tool, JSON input)` for the run and concurrent identical calls share one
   approval, so a retrying agent cannot spam the Outbox.
+- **Decision carried into a resume run.** When `task.context.pending_resume.resume.action` names the
+  tool call an earlier approval was about (the executor sets it on every resume run), and the policy
+  answer for a call is `approve`, a call with the same tool and the same input (canonical JSON, Bash
+  `description` ignored) or the edited input gets the human's decision instead of a new approval:
+  approve/edit → allow (edited input substituted), reject → deny `"The human rejected this action
+  (approval <id>): <note>…"`, respond → deny with the response. A debug `approval_decided` event with
+  `payload.source: "gate_resume"` records it. Policy `allow`/`deny` still win, and any other call goes
+  through a new approval. This is what lets a resumed agent (or a fresh-session fallback that redoes the
+  work) perform an approved action without asking the human a second time.
 - `gate.approvalIds` lists every approval the gate created.
 
 ## Task Center tools (`mcp__taskcenter__*`)
@@ -95,7 +104,8 @@ Error subtypes (`error_max_turns`, `error_max_budget_usd`, `error_during_executi
 `error_max_structured_output_retries`) → `failed` with the error text (still `waiting_human` when an
 approval is pending). The structured output is read from `result.structured_output`, falling back to
 JSON in the result text / last assistant text. `inputTokens` = `usage.input + cache_read + cache_creation`.
-Abort/timeout → `failed` with `"run timed out"` / `"run aborted"`.
+Abort/timeout → `failed` with `"run timed out"` / `"run aborted"`. A resume of an unknown session →
+`sessionNotFound` (see below).
 
 Live smoke (`npx tsx scripts/run-agent-smoke.ts`, haiku, maxTurns 8, budget $0.5):
 
@@ -111,7 +121,7 @@ Live smoke (`npx tsx scripts/run-agent-smoke.ts`, haiku, maxTurns 8, budget $0.5
 Spawns `claude -p --output-format stream-json --verbose --model … --max-turns … --max-budget-usd …
 --permission-mode default --permission-prompts none --setting-sources "" --strict-mcp-config
 --append-system-prompt … --json-schema … [--effort] [--allowedTools] [--disallowedTools] [--mcp-config]
-[--resume]` with the prompt on stdin and parses NDJSON (`system/init` → started, `assistant` text/tool_use
+[--resume <id> | --session-id <uuid>]` with the prompt on stdin and parses NDJSON (`system/init` → started, `assistant` text/tool_use
 → assistant/tool_call, `user` tool_result → tool_result, `result` → cost/result).
 
 **Limitation:** there is no in-process gate. With `--permission-prompts none` anything not pre-allowed is
@@ -124,13 +134,15 @@ taskcenter tools are unavailable here; stdio/http/sse configs are forwarded via 
 ## Codex runner (`CodexRunner`)
 
 `codex exec --json -C <workspace> --sandbox read-only|workspace-write (L3+) --output-schema <file>
---output-last-message <file> --skip-git-repo-check [-m model] [-c model_reasoning_effort=…]`
-(`resume <id>` when resuming; extra flags via `TC_CODEX_ARGS`). Maps `thread.started` → started,
+--output-last-message <file> --skip-git-repo-check [-m model] [-c model_reasoning_effort=…]
+[TC_CODEX_ARGS…] [resume <id> -]`. `resume` is a subcommand of `exec`, so it comes after exec's
+options with `-` (prompt on stdin); the earlier `codex resume <id> exec …` form started the TUI
+subcommand and failed with `unexpected argument '--json'` (checked with codex-cli 0.167). Maps `thread.started` → started,
 `item.*` (`agent_message`, `command_execution`, `file_change`, `mcp_tool_call`, `error`) → assistant /
 tool_call / tool_result, `turn.completed.usage` → cost (no USD figure), `turn.failed` → error. The final
 message file is parsed as AgentOutput. No gate, no taskcenter tools, no inline approvals (the Codex
 sandbox blocks instead). `codex` is not installed here, so `available()` is false and the registry falls
-back.
+back (resume behaviour was checked with a scratch install of `@openai/codex` 0.167).
 
 ## Dry runner (`DryRunner`)
 
@@ -138,12 +150,34 @@ Emits started → assistant → `Read` tool_call/result (through the gate) → o
 cost → result. `task.context.dry` scripts it: `{fail:true, error?}`, `{needsApproval:"Bash git push
 origin main"}` (calls the gate; pending → `waiting_human` + `pendingApprovalId`, rejected → structured
 `blocked`), `{writeFile:"hello.txt"}` (gated Write; denied at L1/L2), `{status, summary, artifacts,
-learned, followUps, delayMs}`.
+learned, followUps, delayMs}`, `{sessionMissing:true}` (a resume run reports `sessionNotFound`; the
+engine's dry runner in `src/engine/dry.ts` accepts the same key).
+
+## Resume of a session that is not here
+
+An approval can be decided on a machine that never ran the task (state imported with
+`tc state import`), so `RunInput.resumeSessionId` names a session that does not exist locally. Runners
+never start a fresh session on their own in that case (the resume message alone lacks the task brief);
+they return `{status: "failed", sessionNotFound: true, sessionId: undefined}`, emit a `progress` event
+instead of an `error` event, and the executor falls back to a fresh session with the brief plus the
+decision (engine.md, "Resume when the session is not on this machine"). Detection
+(`isSessionNotFoundError`, only for resume runs that never got an init/`thread.started`):
+
+| Runner | What the backend does (verified) |
+|---|---|
+| `claude-sdk` | SDK 0.3.318 + bundled CLI: one `result` message `subtype: error_during_execution`, `num_turns: 0`, `errors: ["No conversation found with session ID: <id>"]`, then `query()` throws `Claude Code returned an error result: …`. |
+| `claude-cli` | `claude` 2.1.319 `-p --output-format stream-json --resume <id>`: the same `result` line on stdout, `No conversation found with session ID: <id>` on stderr, exit 1. |
+| `codex` | codex-cli 0.167 `exec … resume <id> -`: no JSON, stderr `Error: thread/resume: thread/resume failed: no rollout found for thread id <id> (code -32600)`, exit 1. |
+| `dry` | `{sessionMissing: true}` in `task.context.dry`. |
 
 ## Tests
 
-`tests/runners.test.ts` (19 tests: result parsing, gate with `FakeApprovals`, taskcenter tools via their
-handlers, dry runner, registry, CLI/Codex arg builders, utils) and `tests/runners-workspace.test.ts`
+`tests/runners.test.ts` (25 tests: result parsing, gate with `FakeApprovals` incl. the decision carried
+into a resume run, taskcenter tools via their handlers, dry runner, registry, CLI/Codex arg builders,
+session-not-found detection for the CLI, SDK and Codex runners against fake executables that replay the
+verified outputs, utils), `tests/engine-resume-fallback.test.ts` (executor: missing session → one run in a
+fresh session that acts on approve/reject, single fallback, normal resume unchanged, resume without a
+recorded session) and `tests/runners-workspace.test.ts`
 (live worktree create/reuse/cleanup in this repo; test branches are deleted afterwards).
 
 ## SDK gotchas hit while building this

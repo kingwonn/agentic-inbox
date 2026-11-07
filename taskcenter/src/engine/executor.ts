@@ -152,6 +152,21 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
 
   // ── checkout ──────────────────────────────────────────────────────
 
+  /** What the resume run needs to know about the decision, incl. the gated tool call of an action approval. */
+  function resumeInfoOf(pending: PendingResume): ResumeInfo {
+    const a = repo.approvals.get(pending.approvalId);
+    const payload = a?.kind === "action" ? a.payload : undefined;
+    const input = payload?.input && typeof payload.input === "object" && !Array.isArray(payload.input) ? (payload.input as Record<string, unknown>) : {};
+    return {
+      approvalId: pending.approvalId,
+      decision: pending.decision,
+      note: pending.note,
+      editedPayload: pending.editedPayload,
+      kind: pending.kind ?? a?.kind,
+      ...(typeof payload?.tool === "string" ? { action: { tool: payload.tool, input } } : {}),
+    };
+  }
+
   async function checkout(taskId: string, reasonOverride?: RunReason): Promise<Running | undefined> {
     const t0 = repo.tasks.get(taskId);
     if (!t0 || t0.status !== "ready" || running.has(taskId)) return undefined;
@@ -193,7 +208,7 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
           patch.context = c;
         }
         const task = transitionTask(repo, bus, t.id, "running", { run_id: run.id, reason, patch });
-        return { task, run, resume: pending ? { approvalId: pending.approvalId, decision: pending.decision, note: pending.note, editedPayload: pending.editedPayload } : undefined };
+        return { task, run, resume: pending ? resumeInfoOf(pending) : undefined };
       });
     } catch (e) {
       logger.warn(`checkout ${taskId} failed: ${errMsg(e)}`);
@@ -246,6 +261,17 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
     }
   }
 
+  function recordResumeFallback(task: Task, run: Run, runner: Runner, resume: ResumeInfo, lostSessionId: string | null, why: string): void {
+    bus.record({
+      type: "system",
+      task_id: task.id,
+      run_id: run.id,
+      message: `${lostSessionId ? `session ${lostSessionId} not found on this machine` : why}; continuing in a fresh session with the decision on approval ${resume.approvalId} (${resume.decision})`,
+      payload: { resume_fallback: "fresh_session", lost_session_id: lostSessionId, approval_id: resume.approvalId, decision: resume.decision, runner: runner.name, reason: trimText(why, 500) },
+    });
+    logger.info(`run ${run.id}: resume fallback to a fresh session (${trimText(why, 200)})`);
+  }
+
   function promptTaskFor(task: Task): Task {
     if (task.context?.phase !== "integrate") return task;
     const children = repo.tasks.children(task.id).map((c) => ({ id: c.id, title: c.title, status: c.status, result_summary: c.result_summary, workspace: c.workspace }));
@@ -293,7 +319,12 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
       const context = deps.loadContext();
       const resume = entry.resume;
       const promptTask = promptTaskFor({ ...task, workspace: ws.path });
-      const { prompt, systemPromptAppend } = deps.buildExecutionPrompt(promptTask, context, { level: task.level, workspace: ws.path, locale: config.locale, resume });
+      const promptOpts = { level: task.level, workspace: ws.path, locale: config.locale, resume };
+      // A resume without any recorded session (the parked run died before its agent started) cannot
+      // continue a conversation: give the fresh session the whole brief plus the decision.
+      const noSession = !!resume && !run.session_id;
+      if (noSession) recordResumeFallback(task, run, runner, resume!, null, "no session was recorded for the parked run");
+      const { prompt, systemPromptAppend } = deps.buildExecutionPrompt(promptTask, context, { ...promptOpts, freshSession: noSession });
       const tools = policy.toolsForLevel(task.level);
       const gateOpts: GateFactoryOpts = {
         policy,
@@ -325,22 +356,45 @@ export function createExecutor(ctx: AppContext, deps: ExecutorDeps & { notifyTas
         allowedTools: tools.allow,
         disallowedTools: tools.deny,
         outputSchema: deps.outputSchema,
-        resumeSessionId: resume ? run.session_id ?? undefined : undefined,
-        resumeMessage: resume ? prompt : undefined,
+        resumeSessionId: resume && !noSession ? run.session_id ?? undefined : undefined,
+        resumeMessage: resume && !noSession ? prompt : undefined,
         mcpServers: deps.mcpServers?.({ task: promptTask, run, workspace: ws.path }),
         gate,
         signal: ac.signal,
         logger: log,
         describeGate: (tool, inp) => policy.evaluateToolUse({ level: task.level, toolName: tool, input: inp, workspace: ws.path }),
       };
-      for await (const ev of runner.run(input)) {
-        persistEvent(task, run, ev);
-        if (ev.type === "started") {
-          if (ev.sessionId) sessionId = ev.sessionId;
-          if (ev.model) model = ev.model;
-        } else if (ev.type === "result") {
-          result = ev.result;
+      const drive = async (inp: RunInput): Promise<RunResult | undefined> => {
+        let out: RunResult | undefined;
+        for await (const ev of runner.run(inp)) {
+          persistEvent(task, run, ev);
+          if (ev.type === "started") {
+            if (ev.sessionId) sessionId = ev.sessionId;
+            if (ev.model) model = ev.model;
+          } else if (ev.type === "result") {
+            out = ev.result;
+          }
         }
+        return out;
+      };
+      result = await drive(input);
+      if (result?.sessionNotFound && resume && input.resumeSessionId && !ac.signal.aborted) {
+        // The parked session lives on another machine (state imported from elsewhere). Nothing ran, so
+        // instead of failing (and later redoing everything without the decision) start one fresh
+        // session in this same run that carries the brief plus the human's decision. Not an attempt.
+        recordResumeFallback(task, run, runner, resume, input.resumeSessionId, result.error ?? "session not found");
+        sessionId = null;
+        repo.runs.update(run.id, { session_id: null });
+        const fresh = deps.buildExecutionPrompt(promptTask, context, { ...promptOpts, freshSession: true });
+        result = await drive({
+          ...input,
+          prompt: fresh.prompt,
+          systemPromptAppend: fresh.systemPromptAppend,
+          resumeSessionId: undefined,
+          resumeMessage: undefined,
+          // in-process MCP server instances are bound to one query; build new ones
+          mcpServers: deps.mcpServers?.({ task: promptTask, run, workspace: ws.path }),
+        });
       }
       if (result?.sessionId) sessionId = result.sessionId;
       const gatePending = (gate as { pendingApprovalId?: string }).pendingApprovalId;

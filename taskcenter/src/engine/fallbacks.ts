@@ -108,8 +108,17 @@ export const fallbackBuildPrompt: BuildPromptFn = (task, context, opts) => {
   if (opts.resume) {
     lines.push("", "## Resume", `Approval ${opts.resume.approvalId} was decided: ${opts.resume.decision}.`);
     if (opts.resume.note) lines.push(`Note from the human: ${opts.resume.note}`);
+    if (opts.resume.action) lines.push(`Action decided on: ${opts.resume.action.tool}`, "```json", JSON.stringify(opts.resume.action.input, null, 2), "```");
     if (opts.resume.editedPayload) lines.push("Edited payload:", "```json", JSON.stringify(opts.resume.editedPayload, null, 2), "```");
-    lines.push("Continue from where you stopped.");
+    if (!opts.freshSession) lines.push("Continue from where you stopped.");
+    else {
+      lines.push("The earlier session ran on another machine; it and its workspace are not available here, so you start fresh.");
+      lines.push(
+        opts.resume.decision === "reject"
+          ? "The human said no: do not redo the earlier work or perform the rejected action; finish right away with status blocked or partial."
+          : "Act on the decision: do only the work needed, perform the decided action exactly as given (it is already approved; do not ask again), and finish.",
+      );
+    }
   }
   lines.push("", `Workspace: ${opts.workspace}`, `Language for human-facing text: ${opts.locale}`);
   lines.push(
@@ -284,7 +293,9 @@ function summarizeInput(input: Record<string, unknown>): string {
  * resume, the decided approval in task.context.pending_resume is honoured once.
  */
 export function createFallbackGate(opts: GateFactoryOpts): ToolGate {
-  const pending = (opts.task.context ?? {}).pending_resume as PendingResume | undefined;
+  // The executor passes { resume: {...} } (the approval service's nested form); accept the flat form too.
+  const marker = (opts.task.context ?? {}).pending_resume as (PendingResume & { resume?: PendingResume }) | undefined;
+  const pending = marker?.resume ?? marker;
   let resumeConsumed = false;
   return async (call) => {
     const d = opts.policy.evaluateToolUse({ level: opts.level, toolName: call.tool, input: call.input, workspace: opts.workspace });

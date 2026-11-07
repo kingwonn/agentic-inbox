@@ -18,7 +18,7 @@ import type { Logger } from "../core/logger.js";
 import { silentLogger } from "../core/logger.js";
 import { extractAgentOutputFromText, parseAgentOutput } from "./result.js";
 import type { RunEvent, RunInput, Runner, RunResult } from "./types.js";
-import { AsyncQueue, agentEnv, errorMessage, truncateOutput } from "./util.js";
+import { AsyncQueue, agentEnv, errorMessage, isSessionNotFoundError, truncateOutput } from "./util.js";
 
 export interface ClaudeCliRunnerOptions {
   bin?: string;
@@ -193,6 +193,7 @@ export class ClaudeCliRunner implements Runner {
     }
 
     let sessionId: string | undefined = input.resumeSessionId;
+    let initSeen = false;
     let last: StreamMsg | undefined;
     let lastAssistantText = "";
     let stderr = "";
@@ -237,6 +238,7 @@ export class ClaudeCliRunner implements Runner {
         return;
       }
       if (m.type === "system" && m.subtype === "init") {
+        initSeen = true;
         sessionId = m.session_id;
         q.push({ type: "started", sessionId, model: m.model });
       } else if (m.type === "assistant") {
@@ -292,7 +294,11 @@ export class ClaudeCliRunner implements Runner {
       const error = `${last.subtype}${last.errors?.length ? `: ${last.errors.join("; ")}` : ""}`;
       result = { ...base, status: "failed", text: lastAssistantText, structured: extractAgentOutputFromText(lastAssistantText), error };
     }
-    if (result.status === "failed" && result.error) yield { type: "error", error: result.error };
+    // `--resume <id>` for a session this machine never saw: error result, no init, exit 1.
+    if (input.resumeSessionId && result.status === "failed" && !initSeen && isSessionNotFoundError(result.error, stderr)) {
+      result = { ...result, sessionId: undefined, sessionNotFound: true };
+      yield { type: "progress", message: `session ${input.resumeSessionId} not found on this machine` };
+    } else if (result.status === "failed" && result.error) yield { type: "error", error: result.error };
     yield { type: "result", result };
   }
 }
