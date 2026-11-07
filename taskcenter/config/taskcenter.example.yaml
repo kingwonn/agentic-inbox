@@ -1,0 +1,109 @@
+# Task Center configuration. Copy to config/taskcenter.yaml. ${VAR} and ${VAR:-default} are read from .env / environment.
+data_dir: ./data
+timezone: Asia/Shanghai
+locale: zh-CN            # language for summaries, notifications and the daily digest (zh-CN | en)
+profile_path: ./config/profile.yaml
+policy_path: ./config/policy.yaml
+
+server:
+  host: 127.0.0.1
+  port: 4800
+  token: ${TC_API_TOKEN:-}          # optional bearer token for write endpoints
+  public_url: ${TC_PUBLIC_URL:-}     # used in notification links (e.g. a tailscale URL)
+
+brain:
+  provider: claude-sdk     # claude-sdk | claude-cli | anthropic-api | dry
+  models:
+    classify: haiku
+    plan: sonnet
+    execute: sonnet
+    heavy: opus            # used for L5 or when a plan marks a task as hard
+  max_turns: 40
+  timeout_seconds: 1800
+  budget_usd_per_run: 2
+  daily_budget_usd: 20
+  effort: medium
+
+executor:
+  concurrency: 2
+  max_attempts: 3
+  backoff_seconds: [60, 300, 900]
+  workspace_root: ./data/workspaces
+  repo_root: ..            # repository root used for code tasks (git worktrees)
+
+patrol:
+  interval_minutes: 15
+  triage_batch_size: 20
+
+approval:
+  wait_seconds: 600        # how long a running agent waits inline for a decision before parking
+  expire_hours: 72
+
+sensors:
+  github:
+    enabled: true
+    token: ${GITHUB_TOKEN:-}
+    use_gh_cli: true       # fall back to `gh api` when no token is set
+    user: kingwonn
+    repos: [kingwonn/agentic-inbox]
+    include_notifications: true
+    include_searches: true
+  imap:
+    enabled: false
+    host: imap.gmail.com
+    port: 993
+    user: ${IMAP_USER:-}
+    password: ${IMAP_PASSWORD:-}
+    mailbox: INBOX
+    since_days: 7
+    max_messages: 50
+  ics:
+    enabled: false
+    urls: [${CALENDAR_ICS_URL:-}]
+    horizon_days: 7
+  localgit:
+    enabled: true
+    repos: [..]
+    stale_days: 30
+  fsdocs:
+    enabled: false
+    paths: []
+    extensions: [md, txt, docx, pdf]
+    max_file_kb: 512
+  manual:
+    enabled: true
+
+notifications:
+  channels:
+    console: { enabled: true }
+    telegram:
+      enabled: false
+      bot_token: ${TELEGRAM_BOT_TOKEN:-}
+      chat_id: ${TELEGRAM_CHAT_ID:-}
+      allowed_user_ids: []
+      poll: true             # long-poll for button presses / replies
+    ntfy:
+      enabled: false
+      server: https://ntfy.sh
+      topic: ${NTFY_TOPIC:-}
+      token: ${NTFY_TOKEN:-}
+    email:
+      enabled: false
+      smtp_host: ${SMTP_HOST:-}
+      smtp_port: ${SMTP_PORT:-587}
+      smtp_user: ${SMTP_USER:-}
+      smtp_password: ${SMTP_PASSWORD:-}
+      from: ${SMTP_USER:-}
+      to: ${NOTIFY_EMAIL_TO:-}
+    webhook:
+      enabled: false
+      url: ${NOTIFY_WEBHOOK_URL:-}
+  digest:
+    enabled: true
+    cron: "30 8 * * *"
+  notify_on: [approval_requested, task_done, task_failed, review_ready, digest, budget_warning]
+
+schedules:
+  patrol: "*/15 * * * *"
+  context_refresh: "15 7 * * *"
+  maintenance: "45 3 * * *"

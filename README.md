@@ -3,6 +3,8 @@
   <p><em>A self-hosted email client with an AI agent, running entirely on Cloudflare Workers</em></p>
 </div>
 
+> **This fork adds a Task Center** (`taskcenter/`): a long-running personal AI work hub that senses GitHub / email / calendar / repos, triages everything into an Inbox with L1–L5 autonomy levels, executes tasks with the Claude Agent SDK, holds sensitive actions in an Outbox for approval, and ships a monitoring dashboard. See [`taskcenter/README.md`](taskcenter/README.md) and [`docs/architecture.md`](docs/architecture.md).
+
 Agentic Inbox lets you send, receive, and manage emails through a modern web interface -- all powered by your own Cloudflare account. Incoming emails arrive via [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/), each mailbox is isolated in its own [Durable Object](https://developers.cloudflare.com/durable-objects/) with a SQLite database, and attachments are stored in [R2](https://developers.cloudflare.com/r2/).
 
 An **AI-powered Email Agent** can read your inbox, search conversations, and draft replies -- built with the [Cloudflare Agents SDK](https://developers.cloudflare.com/agents/) and [Workers AI](https://developers.cloudflare.com/workers-ai/).
