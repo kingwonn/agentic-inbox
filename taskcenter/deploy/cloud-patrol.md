@@ -1,5 +1,15 @@
 # Cloud heartbeat: patrol from a Claude Code scheduled task
 
+> **Current setup (2026-11-07).** The heartbeat runs in one **persistent cloud session**
+> ("Task Center heartbeat") that has this repository attached, so `gh api` and `git push`
+> work. A scheduled task wakes that session at 07:37, 12:37 and 19:37 (Asia/Shanghai); each
+> wake runs `deploy/cloud-heartbeat.sh` (import state → patrol → triage → plan → run up to 2
+> ready tasks → export → push to `taskcenter-state`) and sends a push notification when
+> something needs a decision. You answer by replying in that session (for example
+> `approve apr_xxx` or `不要做 tsk_xxx`); the session runs the matching `tc` command.
+> The first design below (fresh session per run) failed in practice: a fresh scheduled
+> session has no repository attached, so GitHub returned 403 and nothing was saved.
+
 Goal: while the laptop is closed, a cloud Claude Code session polls the sensors,
 triages what it finds, and ships the resulting state to git so the local daemon can
 merge it later. Nothing is executed in the cloud (no runner); only sensing, triage
