@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "exported_at": "2026-11-10T23:38:23.156Z",
+  "host": "vm",
+  "since": null,
+  "tables": {
+    "signals": {
+      "file": "signals.jsonl",
+      "rows": 7
+    },
+    "inbox_items": {
+      "file": "inbox_items.jsonl",
+      "rows": 5
+    },
+    "tasks": {
+      "file": "tasks.jsonl",
+      "rows": 3
+    },
+    "runs": {
+      "file": "runs.jsonl",
+      "rows": 3
+    },
+    "events": {
+      "file": "events.jsonl",
+      "rows": 196
+    },
+    "approvals": {
+      "file": "approvals.jsonl",
+      "rows": 3
+    },
+    "artifacts": {
+      "file": "artifacts.jsonl",
+      "rows": 3
+    },
+    "notifications": {
+      "file": "notifications.jsonl",
+      "rows": 5
+    },
+    "memories": {
+      "file": "memories.jsonl",
+      "rows": 4
+    },
+    "sensor_cursors": {
+      "file": "sensor_cursors.jsonl",
+      "rows": 4
+    },
+    "schedules": {
+      "file": "schedules.jsonl",
+      "rows": 8
+    },
+    "budgets": {
+      "file": "budgets.jsonl",
+      "rows": 2
+    },
+    "meta": {
+      "file": "meta.jsonl",
+      "rows": 3
+    }
+  }
+}
