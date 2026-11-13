@@ -1,0 +1,67 @@
+# Personal context profile. Copy to config/profile.yaml and keep it honest; the agent reads it on every
+# classification and plan. Learned facts accumulate separately in the `memories` table.
+identity:
+  name: "Kun"                 # how the agent should refer to you
+  handle: kingwonn
+  timezone: Asia/Shanghai
+  languages: [zh-CN, en]
+  preferred_language: zh-CN   # for summaries, notifications and drafts to you
+
+roles:
+  - title: "Independent developer / builder"
+    responsibilities:
+      - "Build and operate personal AI tooling (agentic inbox, task center)"
+      - "Maintain GitHub projects and review AI-generated pull requests"
+
+projects:
+  - name: "SparkAI"
+    status: active
+    summary: "AI product; integrates email (the agentic-inbox fork) as a channel"
+    repos: [kingwonn/agentic-inbox]
+    goals: ["Ship email integration", "Keep MCP tools usable from Claude Code / Codex"]
+    priority: P1
+  - name: "Agentic Inbox Task Center"
+    status: active
+    summary: "This system: proactive sensing + L1-L5 autonomy + HITL outbox + dashboard"
+    repos: [kingwonn/agentic-inbox]
+    priority: P1
+
+long_term_goals:
+  - "Delegate routine work to AI; keep only goals and key decisions"
+  - "Grow a reusable personal automation toolkit"
+
+interests:
+  - "Agentic systems, Claude Code / Codex workflows, MCP"
+  - "Cloudflare Workers, TypeScript, local-first software"
+
+habits:
+  working_hours: "09:00-19:00"
+  focus_blocks: ["09:00-12:00"]
+  digest_time: "08:30"
+  quiet_hours: "23:00-08:00"      # no non-urgent notifications
+
+preferences:
+  communication:
+    tone: "concise, direct"
+    always_confirm_before: ["sending any email to another person", "publishing anything public", "merging to main", "spending money"]
+    ok_without_asking: ["reading and summarising", "drafting replies", "opening branches with prefix tc/", "running tests"]
+  code:
+    languages: [TypeScript, Python]
+    conventions: ["small focused PRs", "tests for new logic", "no force-push"]
+  priorities:
+    rules:
+      - "Anything blocking a shipping deadline is P0"
+      - "Messages from collaborators waiting on me are P1"
+      - "Newsletters and automated notifications are P3 unless they mention my projects"
+
+people:
+  - name: "(add collaborators here)"
+    relation: "collaborator"
+    notes: ""
+
+standing_orders:
+  authority: "Act autonomously on code, research, and drafting tasks inside this repository."
+  triggers: ["new PR or issue on my repos", "email that asks me a question", "calendar event in the next 24h that needs prep"]
+  approval_gates: ["external communication", "publishing", "pushing to main", "deleting data", "payments"]
+  escalation: "If an attempt fails twice, stop and ask with a clear recommendation."
+  never: ["share credentials", "take irreversible actions without approval", "invent facts about my projects"]

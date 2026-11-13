@@ -1,0 +1,98 @@
+# Task Center policy: the single source of truth for autonomy levels and tool gating.
+# LLM proposes a level; these rules clamp it. Hard lines below require approval at every level.
+version: 1
+
+levels:
+  auto_promote:
+    min_level: 3        # inbox items at this level or above become tasks automatically
+    max_priority: P2    # ... if their priority is at least this (P0 is highest)
+  confidence_floor: 0.6 # below this confidence the proposed level is lowered by one
+  default_level: 2
+
+# Maximum level per category (clamps the LLM proposal)
+categories:
+  code: { max_level: 5 }
+  research: { max_level: 5 }
+  learning: { max_level: 5 }
+  writing: { max_level: 4 }
+  admin: { max_level: 4 }
+  ops: { max_level: 4 }
+  communication: { max_level: 4 }
+  external_communication: { max_level: 4 }
+  publishing: { max_level: 4 }
+  scheduling: { max_level: 3 }
+  personal: { max_level: 3 }
+  finance: { max_level: 2 }
+  other: { max_level: 3 }
+
+# Capabilities a task may require. If the capability is not configured, the level is clamped.
+capabilities:
+  email_send: { requires: [smtp], max_level_without: 2 }
+  github_write: { requires: [github_token], max_level_without: 3 }
+  calendar_write: { requires: [calendar_api], max_level_without: 2 }
+  web_browse: { requires: [], max_level_without: 5 }
+
+# Explicit overrides by source or keyword (first match wins)
+overrides:
+  - match: { source: manual }
+    max_level: 5
+  - match: { keyword: "invoice|payment|refund|wire|transfer|发票|付款|转账" }
+    max_level: 2
+    category: finance
+
+# Tool policy by level for execution agents
+tools:
+  by_level:
+    1: { allow: [Read, Grep, Glob, LS, WebFetch, WebSearch, "mcp__taskcenter__*"], deny: [Write, Edit, MultiEdit, NotebookEdit, Bash, Task] }
+    2: { allow: [Read, Grep, Glob, LS, WebFetch, WebSearch, "mcp__taskcenter__*"], deny: [Write, Edit, MultiEdit, NotebookEdit, Bash, Task] }
+    3: { allow: [Read, Grep, Glob, LS, WebFetch, WebSearch, Write, Edit, MultiEdit, NotebookEdit, "mcp__taskcenter__*", "Bash"], deny: [] }
+    4: { allow: [Read, Grep, Glob, LS, WebFetch, WebSearch, Write, Edit, MultiEdit, NotebookEdit, Bash, Task, "mcp__taskcenter__*"], deny: [] }
+    5: { allow: [Read, Grep, Glob, LS, WebFetch, WebSearch, Write, Edit, MultiEdit, NotebookEdit, Bash, Task, "mcp__taskcenter__*"], deny: [] }
+  # Hard lines: always require human approval regardless of level
+  always_approve:
+    tools:
+      - mcp__taskcenter__send_email
+      - mcp__taskcenter__send_message
+      - mcp__taskcenter__publish
+      - mcp__taskcenter__create_pr
+      - mcp__email__send_email
+      - mcp__email__send_reply
+    bash_patterns:
+      - '\bgit\s+push\b'
+      - '\bgh\s+pr\s+(create|merge|close)\b'
+      - '\bgh\s+(issue|release)\s+(create|delete|close)\b'
+      - '\bgit\s+(branch|push)\s+.*(-D|--delete|--force|-f)\b'
+      - '\bgit\s+reset\s+--hard\b'
+      - '\brm\s+-(rf|fr|r)\b'
+      - '\bnpm\s+publish\b'
+      - '\bcurl\b[^|]*-X\s*(POST|PUT|PATCH|DELETE)'
+      - '\bwget\b.*--post'
+      - '\bmail\b|\bsendmail\b|\bmutt\b'
+      - '\bsudo\b'
+      - '\bdocker\s+(rm|rmi|system\s+prune)\b'
+      - '\bkubectl\s+(delete|apply)\b'
+      - '\bterraform\s+(apply|destroy)\b'
+      - '\bwrangler\s+(deploy|publish)\b'
+    paths_outside_workspace: approve   # writes outside the task workspace: approve | deny | allow
+  # Tools that are denied outright for AI at any level
+  always_deny:
+    bash_patterns:
+      - '\bmkfs\b'
+      - '\bdd\s+if='
+      - ':\(\)\s*\{\s*:\|:&\s*\};:'
+      - '\bshutdown\b|\breboot\b'
+  # Level 5 may skip approval for these (narrow, pre-authorised scopes)
+  level5_preauthorized:
+    bash_patterns:
+      - '\bgit\s+push\s+(-u\s+)?origin\s+(tc/|taskcenter/)'   # pushing to task-center branches only
+
+# Risk classification for approvals
+risk:
+  high_patterns:
+    - '\bgit\s+push\b.*\b(main|master|release)\b'
+    - '\brm\s+-rf\b'
+    - '\bsend_email\b'
+    - '\bpublish\b'
+  medium_patterns:
+    - '\bgit\s+push\b'
+    - '\bgh\s+pr\b'

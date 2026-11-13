@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/*
+!data/.gitkeep
+.env
+.env.*
+!.env.example
+web/node_modules/
+web/dist/
+*.log

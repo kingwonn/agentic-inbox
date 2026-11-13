@@ -1,0 +1,33 @@
+# systemd user unit for the Task Center daemon (Linux).
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/taskcenter.service ~/.config/systemd/user/
+#   # edit WorkingDirectory / ExecStart paths below if taskcenter lives elsewhere
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now taskcenter
+#   loginctl enable-linger "$USER"        # keep user services running after logout
+# Logs: journalctl --user -u taskcenter -f   (and data/logs/taskcenter.jsonl)
+[Unit]
+Description=Agentic Inbox Task Center daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/agentic-inbox/taskcenter
+# Node >= 22.12 must be on PATH for the service (adjust for nvm/volta/asdf installs).
+Environment=PATH=%h/.local/bin:%h/.volta/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=TC_LOG_LEVEL=info
+ExecStart=/usr/bin/env node bin/tc.mjs daemon
+Restart=always
+RestartSec=5s
+# Graceful stop: SIGTERM → stop taking tasks, wait up to 30s for runs, then abort.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+# Hardening (relax if the agent needs to write outside the repo / workspaces)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
