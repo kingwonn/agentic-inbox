@@ -1,9 +1,8 @@
 # Personal context profile. Copy to config/profile.yaml and keep it honest; the agent reads it on every
 # classification and plan. Learned facts accumulate separately in the `memories` table.
 identity:
-  name: "Wang Kun"            # how the agent should refer to you
+  name: "Kun"                 # how the agent should refer to you
   handle: kingwonn
-  email: wkunwking@gmail.com
   timezone: Asia/Shanghai
   languages: [zh-CN, en]
   preferred_language: zh-CN   # for summaries, notifications and drafts to you

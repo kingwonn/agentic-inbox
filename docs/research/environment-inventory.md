@@ -47,7 +47,7 @@ These are session skills; the daemon cannot call them directly. The cloud patrol
 
 - GitHub user `kingwonn` (16 public repos). Repo `kingwonn/agentic-inbox` is a fork of `cloudflare/agentic-inbox`.
 - Open PR #1 `codex/analyze-project-for-sparkai-integration` ("Mailbox auto-resolution helper, integrate into MCP tools, and add tests") – authored with Codex on 2026-04-19; branch `sparkai-email` also exists. "SparkAI" looks like one of the user's projects (email integration). This is the first real signal the task center should surface.
-- User email: `wkunwking@gmail.com` (Gmail → IMAP app password path is applicable).
+- The user has a Gmail account (IMAP app-password path is applicable).
 
 ## 6. LLM access paths (brain)
 

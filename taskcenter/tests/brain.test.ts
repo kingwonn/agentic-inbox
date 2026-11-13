@@ -153,11 +153,11 @@ describe("context", () => {
     repo.memories.create({ kind: "fact", content: "low confidence thing", source: "test", confidence: 0.2 });
     const ctx = loadContext(loaded(cfg({ locale: "en" })), repo);
     expect(ctx.profile.identity).toBeTruthy();
-    expect(ctx.profileText).toContain("Wang Kun");
+    expect(ctx.profileText).toContain("Kun");
     expect(ctx.profileText).toContain("SparkAI");
     expect(ctx.memoriesText).toContain("Uses pnpm at work");
     expect(ctx.memoriesText).not.toContain("low confidence thing");
-    expect(ctx.text).toContain("Wang Kun");
+    expect(ctx.text).toContain("Kun");
     expect(estimateTokens(ctx.text)).toBeLessThanOrEqual(3100);
     expect(ctx.locale).toBe("en");
     // profile.yaml says preferred_language zh-CN, so headings are Chinese regardless of config locale
@@ -327,7 +327,7 @@ describe("execution prompt", () => {
     expect(systemPromptAppend).toContain("needs_human");
     expect(systemPromptAppend).toContain("Simplified Chinese");
     expect(systemPromptAppend).toContain("/tmp/ws/t1");
-    expect(systemPromptAppend).toContain("Wang Kun");
+    expect(systemPromptAppend).toContain("Kun");
     expect(prompt).toContain("# Task: Write a hello file");
     expect(prompt).toContain("hello.txt exists");
     expect(prompt).toContain("<untrusted_content>");

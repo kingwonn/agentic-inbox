@@ -63,7 +63,7 @@ function seedInner(repo: Repo, bus: Bus): SeedResult {
     body: "Kun 你好，\n\n下周二下午 3 点方便联调 SparkAI 的邮件渠道吗？需要你这边先把 MCP 的 send_email 工具权限打开。\n\n谢谢，\n李雷",
     actor: "lilei@example.com",
     occurred_at: ago(5 * HOUR),
-    metadata: { from: "lilei@example.com", to: ["wkunwking@gmail.com"], has_question: true },
+    metadata: { from: "lilei@example.com", to: ["me@example.com"], has_question: true },
   }).signal;
   const sigCal = repo.signals.upsert({
     source: "ics",
