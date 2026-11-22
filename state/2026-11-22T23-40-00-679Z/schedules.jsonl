@@ -1,0 +1,8 @@
+{"name":"patrol","cron":"*/15 * * * *","job":"patrol","enabled":1,"last_run_at":"2026-11-06T08:45:00.010Z","last_status":"ok","last_error":null,"next_run_at":"2026-11-06T09:00:00.000Z"}
+{"name":"triage","cron":"*/5 * * * *","job":"triage","enabled":1,"last_run_at":"2026-11-06T08:50:00.032Z","last_status":"ok","last_error":null,"next_run_at":"2026-11-06T08:55:00.000Z"}
+{"name":"plan","cron":"* * * * *","job":"plan","enabled":1,"last_run_at":"2026-11-06T08:52:00.029Z","last_status":"ok","last_error":null,"next_run_at":"2026-11-06T08:53:00.000Z"}
+{"name":"executor_tick","cron":"*/30 * * * * *","job":"executor_tick","enabled":1,"last_run_at":"2026-11-06T08:52:30.028Z","last_status":"ok","last_error":null,"next_run_at":"2026-11-06T08:53:00.000Z"}
+{"name":"follow_ups","cron":"2-59/5 * * * *","job":"follow_ups","enabled":1,"last_run_at":"2026-11-06T08:52:00.030Z","last_status":"ok","last_error":null,"next_run_at":"2026-11-06T08:57:00.000Z"}
+{"name":"digest","cron":"30 8 * * *","job":"digest","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":"2026-11-07T00:30:00.000Z"}
+{"name":"context_refresh","cron":"15 7 * * *","job":"context_refresh","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":"2026-11-06T23:15:00.000Z"}
+{"name":"maintenance","cron":"45 3 * * *","job":"maintenance","enabled":1,"last_run_at":null,"last_status":null,"last_error":null,"next_run_at":"2026-11-06T19:45:00.000Z"}
